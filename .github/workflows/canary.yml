@@ -1,0 +1,159 @@
+name: Canary Release (reusable)
+
+# Reusable canary release — every consumer push to main releases vX.Y.Z-canary.N
+# via semantic-release (main runs as a prerelease branch; N is derived from
+# existing tags: dense, collision-free, re-run on same HEAD is a no-op, resets
+# after each stable release). Stable releases are cut by the companion
+# release-start.yml / release-artifacts.yml pair (reviewed draft → publish).
+#
+# The semantic-release config is materialized at runtime from THIS file — the
+# single source of truth for all repos; consumers carry no release config.
+#
+# Consumer contract (see README):
+#   - scripts/release-prepare.sh <version>   build artifacts (honors RELEASE_CHANNEL)
+#   - scripts/release-publish.sh <version>   push artifacts  (honors RELEASE_CHANNEL)
+#   - a dormant `stable` branch exists (semantic-release branch validation)
+#   - caller grants: contents: read, packages: write, id-token: write
+#     and passes `secrets: inherit`
+
+on:
+  workflow_call:
+    inputs:
+      docker-image:
+        description: "Container image name (e.g. ghcr.io/endatix/my-api)"
+        required: true
+        type: string
+      dotnet-version:
+        description: "Optional .NET SDK version to set up (e.g. 10.x)"
+        required: false
+        type: string
+        default: ""
+      java-version:
+        description: "Optional Temurin JDK version to set up (e.g. 21)"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  canary:
+    name: Canary Release
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+    steps:
+      - name: 🔍 Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # semantic-release needs full history + tags
+          persist-credentials: false # release uses the App token (env), not the git credential
+
+      - name: 🔐 Fetch secrets (Infisical, OIDC)
+        uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
+        with:
+          method: "oidc"
+          env-slug: "prod"
+          project-slug: "github-actions-for-endatix"
+          identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
+          recursive: true
+
+      - name: 🔑 Endatix Automations APP token (GitHub App)
+        id: app-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          # App id + private key are injected by the Infisical step above.
+          app-id: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_APP_ID }}
+          private-key: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }} # scope the token to the CALLER repo only
+
+      - name: 📦 Setup Node (semantic-release)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "lts/*"
+
+      - name: 📦 Setup .NET
+        if: inputs.dotnet-version != ''
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: ☕ Setup JDK
+        if: inputs.java-version != ''
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: gradle
+
+      - name: 🐳 GHCR login
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # packages:write is the only write scope on this token
+
+      - name: 🐤 semantic-release (canary channel)
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }} # App token, not the read-only job token
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+          RELEASE_CHANNEL: canary # release-publish.sh: do not move the docker `latest` tag
+        run: |
+          CFG="${RUNNER_TEMP}/release-config"
+          mkdir -p "$CFG"
+
+          # Custom analyzeCommits: every push with new commits releases the next
+          # canary; zero new commits (re-run on same HEAD) releases nothing.
+          cat > "${CFG}/analyze-commits.cjs" <<'EOF'
+          function analyzeCommits(pluginConfig, context) {
+            const { commits, logger } = context;
+            if (commits.length === 0) {
+              logger.log("No new commits (re-run on same HEAD?) — no release");
+              return null;
+            }
+            logger.log("Canary: %d new commit(s) → patch prerelease", commits.length);
+            return "patch";
+          }
+          module.exports = { analyzeCommits };
+          EOF
+
+          # main as a PRERELEASE branch → semantic-release derives vX.Y.Z-canary.N
+          # from existing tags. The dormant `stable` branch only satisfies the
+          # ≥1-release-branch validation. Manually created stable tags (from the
+          # release-start flow) are picked up from git automatically.
+          cat > "${CFG}/release.config.cjs" <<'EOF'
+          module.exports = {
+            branches: ["stable", { name: "main", prerelease: "canary", channel: "canary" }],
+            plugins: [
+              `${__dirname}/analyze-commits.cjs`,
+              ["@semantic-release/release-notes-generator", { preset: "conventionalcommits" }],
+              [
+                "@semantic-release/exec",
+                {
+                  prepareCmd: "scripts/release-prepare.sh ${nextRelease.version}",
+                  publishCmd: "scripts/release-publish.sh ${nextRelease.version}",
+                },
+              ],
+              [
+                "@semantic-release/github",
+                {
+                  // Post-release comment/label API calls need Issues/PR write on the
+                  // GitHub App (it only has Contents) — keep them off.
+                  successComment: false,
+                  failComment: false,
+                  failTitle: false,
+                  releasedLabels: false,
+                },
+              ],
+            ],
+          };
+          EOF
+
+          # The package.json anchors npm to $CFG (otherwise it walks up to the
+          # nearest project root and installs the tooling elsewhere).
+          echo '{"private":true}' > "${CFG}/package.json"
+          (cd "$CFG" && npm install --no-save --no-fund --no-audit --loglevel=error \
+            semantic-release@24 @semantic-release/exec@6 conventional-changelog-conventionalcommits@8)
+
+          # DRY_RUN is never set in CI — it enables local testing of this script.
+          "${CFG}/node_modules/.bin/semantic-release" \
+            --extends "${CFG}/release.config.cjs" ${DRY_RUN:+--dry-run}

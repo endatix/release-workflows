@@ -1,0 +1,83 @@
+name: Publish Stable Artifacts (reusable)
+
+# Step 2 of the human-reviewed stable release flow: the caller invokes this on
+# `release: types: [published]` — i.e. when a human clicks "Publish release" on
+# the reviewed draft, which is the moment GitHub creates the vX.Y.Z tag.
+#
+# Promotes the EXACT canary Docker image (digest retag, no rebuild) when one
+# exists for the tagged commit; otherwise rebuilds from the tag via the
+# consumer's release scripts (scripts/release-prepare.sh + release-publish.sh).
+#
+# The caller must filter out prereleases (canaries publish their own artifacts):
+#   if: ${{ !github.event.release.prerelease }}
+# Caller grants: contents: read, packages: write.
+
+on:
+  workflow_call:
+    inputs:
+      docker-image:
+        description: "Container image name (e.g. ghcr.io/endatix/my-api)"
+        required: true
+        type: string
+      dotnet-version:
+        description: "Optional .NET SDK version for the rebuild fallback"
+        required: false
+        type: string
+        default: ""
+      java-version:
+        description: "Optional Temurin JDK version for the rebuild fallback"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  promote:
+    name: Promote artifacts to stable
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔍 Checkout release tag
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0 # need all tags to find the canary pointing at this commit
+
+      - name: 🐳 GHCR login
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 📦 Setup .NET
+        if: inputs.dotnet-version != ''
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: ☕ Setup JDK
+        if: inputs.java-version != ''
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: gradle
+
+      - name: 🚀 Promote canary image (or rebuild) as ${{ github.event.release.tag_name }}
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: |
+          case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac
+          VERSION="${TAG#v}"
+          CANARY_TAG=$(git tag --points-at HEAD -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1 || true)
+          if [ -n "$CANARY_TAG" ]; then
+            echo "Promoting ${CANARY_TAG} image digest to ${VERSION} + latest (no rebuild)"
+            docker buildx imagetools create \
+              -t "${DOCKER_IMAGE}:${VERSION}" \
+              -t "${DOCKER_IMAGE}:latest" \
+              "${DOCKER_IMAGE}:${CANARY_TAG#v}"
+          else
+            echo "No canary image for $(git rev-parse HEAD) — rebuilding from the tag"
+            scripts/release-prepare.sh "$VERSION"
+            RELEASE_CHANNEL=stable scripts/release-publish.sh "$VERSION"
+          fi

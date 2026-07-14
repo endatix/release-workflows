@@ -1,0 +1,103 @@
+name: Start Stable Release (reusable)
+
+# Step 1 of the human-reviewed stable release flow: creates a DRAFT GitHub
+# release pinned to a canary's commit, with aggregated notes generated from the
+# conventional commits since the last stable tag.
+#
+# A draft creates NO git tag and publishes NO artifacts — edit the notes in the
+# GitHub UI, then click "Publish release". Publishing creates the vX.Y.Z tag,
+# which triggers the caller's release-artifacts workflow to promote artifacts.
+# Deleting the draft instead abandons the release — nothing was tagged or shipped.
+#
+# Caller grants: contents: write. GITHUB_TOKEN is passed implicitly.
+
+on:
+  workflow_call:
+    inputs:
+      canary-tag:
+        description: "Canary tag to promote (empty = newest canary)"
+        required: false
+        type: string
+        default: ""
+      bump:
+        description: "Version bump relative to the last stable release (major/minor/patch)"
+        required: false
+        type: string
+        default: "minor"
+
+jobs:
+  draft:
+    name: Create draft release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔍 Checkout code
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0 # need all tags + history for notes generation
+
+      - name: 📝 Create draft release with generated notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANARY_INPUT: ${{ inputs.canary-tag }}
+          BUMP: ${{ inputs.bump }}
+        run: |
+          # --- resolve the canary to promote ---
+          CANARY_TAG="${CANARY_INPUT:-$(git tag -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1)}"
+          [ -n "$CANARY_TAG" ] || { echo "::error::No canary tag found to promote"; exit 1; }
+          SHA=$(git rev-parse -q --verify "refs/tags/${CANARY_TAG}^{commit}") \
+            || { echo "::error::Tag ${CANARY_TAG} does not exist"; exit 1; }
+
+          # --- compute the next stable version ---
+          LAST_STABLE=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- - | head -1 || true)
+          BASE="${LAST_STABLE#v}"; BASE="${BASE:-0.0.0}"
+          IFS=. read -r MAJOR MINOR PATCH <<< "$BASE"
+          case "$BUMP" in
+            major) NEXT="$((MAJOR + 1)).0.0" ;;
+            minor) NEXT="${MAJOR}.$((MINOR + 1)).0" ;;
+            patch) NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
+            *) echo "::error::Invalid bump '${BUMP}' (major/minor/patch)"; exit 1 ;;
+          esac
+
+          # --- sanity checks ---
+          if [ -n "$LAST_STABLE" ]; then
+            git merge-base --is-ancestor "$LAST_STABLE" "$SHA" \
+              || { echo "::error::${CANARY_TAG} (${SHA}) is not a descendant of ${LAST_STABLE} — already released?"; exit 1; }
+          fi
+          if git rev-parse -q --verify "refs/tags/v${NEXT}" >/dev/null \
+             || gh release view "v${NEXT}" --json isDraft >/dev/null 2>&1; then
+            echo "::error::v${NEXT} already exists (tag or draft) — publish/delete it first"; exit 1
+          fi
+
+          # --- generate aggregated notes (conventional commits since last stable) ---
+          RANGE="${LAST_STABLE:+${LAST_STABLE}..}${SHA}"
+          section() { # <type-regex> <heading>
+            local entries
+            entries=$(git log --no-merges --reverse --format='%s (%h)' "$RANGE" \
+              | sed -nE "s/^${1}(\([^)]*\))?!?: (.*)/* \2/p")
+            [ -n "$entries" ] && printf '### %s\n\n%s\n\n' "$2" "$entries" || true
+          }
+          {
+            printf 'Promotes `%s` (`%s`) — all changes since %s.\n\n' "$CANARY_TAG" "${SHA:0:7}" "${LAST_STABLE:-the beginning}"
+            section feat "Features"
+            section fix "Bug Fixes"
+            section perf "Performance"
+            OTHERS=$(git log --no-merges --reverse --format='* %s (%h)' "$RANGE" \
+              | grep -vE '^\* (feat|fix|perf)(\([^)]*\))?!?: ' || true)
+            [ -n "$OTHERS" ] && printf '### Other Changes\n\n%s\n\n' "$OTHERS"
+            [ -n "$LAST_STABLE" ] && printf '**Full changelog**: https://github.com/%s/compare/%s...v%s\n' "$GITHUB_REPOSITORY" "$LAST_STABLE" "$NEXT"
+          } > notes.md
+
+          # --- create the draft (no tag is created for drafts) ---
+          URL=$(gh release create "v${NEXT}" \
+            --draft \
+            --target "$SHA" \
+            --title "v${NEXT}" \
+            --notes-file notes.md)
+          {
+            echo "## Draft release v${NEXT} created"
+            echo
+            echo "- Source: \`${CANARY_TAG}\` (\`${SHA}\`)"
+            echo "- Review and edit the notes, then click **Publish release**: ${URL}"
+            echo "- Publishing creates the tag and triggers the artifact promotion."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Draft created: ${URL}"
