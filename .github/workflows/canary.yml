@@ -96,7 +96,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }} # App token, not the read-only job token
           DOCKER_IMAGE: ${{ inputs.docker-image }}
-          RELEASE_CHANNEL: canary # release-publish.sh: do not move the docker `latest` tag
+          RELEASE_CHANNEL: canary # release-publish.sh: do not move floating tags (docker latest, npm latest)
+          # Standard environment for consumer release scripts — org-derived, exported
+          # for every repo; repos that publish only a docker image simply ignore them.
+          GH_PACKAGES_USER: ${{ github.actor }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }} # packages:write — NuGet/npm push + helm registry login
+          NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
         run: |
           CFG="${RUNNER_TEMP}/release-config"
           mkdir -p "$CFG"

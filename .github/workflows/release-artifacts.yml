@@ -4,9 +4,13 @@ name: Publish Stable Artifacts (reusable)
 # `release: types: [published]` — i.e. when a human clicks "Publish release" on
 # the reviewed draft, which is the moment GitHub creates the vX.Y.Z tag.
 #
-# Promotes the EXACT canary Docker image (digest retag, no rebuild) when one
-# exists for the tagged commit; otherwise rebuilds from the tag via the
-# consumer's release scripts (scripts/release-prepare.sh + release-publish.sh).
+# Promotion strategies (input `promotion`):
+#   image-retag (default) — retag the canary Docker image digest as the stable
+#       version (byte-identical, no rebuild); falls back to rebuild when no
+#       canary tag points at the released commit.
+#   rebuild — always run the consumer's release scripts at the tag. REQUIRED for
+#       repos with non-OCI artifacts (NuGet/npm packages bake the version string
+#       into the artifact and cannot be retagged).
 #
 # The caller must filter out prereleases (canaries publish their own artifacts):
 #   if: ${{ !github.event.release.prerelease }}
@@ -19,13 +23,18 @@ on:
         description: "Container image name (e.g. ghcr.io/endatix/my-api)"
         required: true
         type: string
+      promotion:
+        description: "image-retag (default) or rebuild (required for NuGet/npm/Helm repos)"
+        required: false
+        type: string
+        default: "image-retag"
       dotnet-version:
-        description: "Optional .NET SDK version for the rebuild fallback"
+        description: "Optional .NET SDK version for the rebuild path"
         required: false
         type: string
         default: ""
       java-version:
-        description: "Optional Temurin JDK version for the rebuild fallback"
+        description: "Optional Temurin JDK version for the rebuild path"
         required: false
         type: string
         default: ""
@@ -62,22 +71,30 @@ jobs:
           java-version: ${{ inputs.java-version }}
           cache: gradle
 
-      - name: 🚀 Promote canary image (or rebuild) as ${{ github.event.release.tag_name }}
+      - name: 🚀 Promote canary artifacts (or rebuild) as ${{ github.event.release.tag_name }}
         env:
           TAG: ${{ github.event.release.tag_name }}
           DOCKER_IMAGE: ${{ inputs.docker-image }}
+          PROMOTION: ${{ inputs.promotion }}
+          RELEASE_CHANNEL: stable # rebuild path: release-publish.sh may move floating tags
+          # Standard environment for consumer release scripts (rebuild path) —
+          # org-derived; repos that publish only a docker image ignore them.
+          GH_PACKAGES_USER: ${{ github.actor }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
         run: |
           case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac
           VERSION="${TAG#v}"
           CANARY_TAG=$(git tag --points-at HEAD -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1 || true)
-          if [ -n "$CANARY_TAG" ]; then
+          if [ "$PROMOTION" = "image-retag" ] && [ -n "$CANARY_TAG" ]; then
             echo "Promoting ${CANARY_TAG} image digest to ${VERSION} + latest (no rebuild)"
             docker buildx imagetools create \
               -t "${DOCKER_IMAGE}:${VERSION}" \
               -t "${DOCKER_IMAGE}:latest" \
               "${DOCKER_IMAGE}:${CANARY_TAG#v}"
           else
-            echo "No canary image for $(git rev-parse HEAD) — rebuilding from the tag"
+            echo "Rebuilding at the tag (promotion=${PROMOTION}, canary tag: ${CANARY_TAG:-none})"
             scripts/release-prepare.sh "$VERSION"
-            RELEASE_CHANNEL=stable scripts/release-publish.sh "$VERSION"
+            scripts/release-publish.sh "$VERSION"
           fi

@@ -158,6 +158,13 @@ jobs:
       dotnet-version: "10.x"
 ```
 
+If your repo publishes package artifacts besides the Docker image (NuGet, npm,
+Helm), add `promotion: rebuild` — package versions are baked into the artifacts,
+so unlike a Docker image they can't be digest-retagged; the stable release is
+rebuilt at the tagged commit via your release scripts instead (see
+[endatix/api-contracts](https://github.com/endatix/api-contracts) for a
+multi-artifact example).
+
 ### Step 4 — push and verify
 
 Push to `main`. The run should end with a new `vX.Y.Z-canary.N` tag, a
