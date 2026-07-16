@@ -1,10 +1,14 @@
-name: Canary Release (reusable)
+name: CI Pipeline (reusable)
 
-# Reusable canary release — every consumer push to main releases vX.Y.Z-canary.N
-# via semantic-release (main runs as a prerelease branch; N is derived from
-# existing tags: dense, collision-free, re-run on same HEAD is a no-op, resets
-# after each stable release). Stable releases are cut by the companion
-# release-start.yml / release-artifacts.yml pair (reviewed draft → publish).
+# Reusable CI pipeline — ONE job, ONE build per event:
+#   • non-main (PRs, branches) → build validation ONLY: runs the consumer's
+#     release-prepare.sh with a throwaway version (0.0.0-ci). Nothing publishes.
+#   • push to main → canary release: semantic-release builds ONCE at the real
+#     version (prepare hook) and publishes vX.Y.Z-canary.N (main runs as a
+#     prerelease branch; N derived from existing tags: dense, collision-free,
+#     re-run on same HEAD is a no-op, resets after each stable release).
+# Stable releases are cut by the companion release-start.yml /
+# release-artifacts.yml pair (reviewed draft → publish).
 #
 # The semantic-release config is materialized at runtime from THIS file — the
 # single source of truth for all repos; consumers carry no release config.
@@ -35,8 +39,8 @@ on:
         default: ""
 
 jobs:
-  canary:
-    name: Canary Release
+  pipeline:
+    name: Build / Canary
     runs-on: ubuntu-latest
     environment:
       name: Production
@@ -46,30 +50,6 @@ jobs:
         with:
           fetch-depth: 0 # semantic-release needs full history + tags
           persist-credentials: false # release uses the App token (env), not the git credential
-
-      - name: 🔐 Fetch secrets (Infisical, OIDC)
-        uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
-        with:
-          method: "oidc"
-          env-slug: "prod"
-          project-slug: "github-actions-for-endatix"
-          identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
-          recursive: true
-
-      - name: 🔑 Endatix Automations APP token (GitHub App)
-        id: app-token
-        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
-        with:
-          # App id + private key are injected by the Infisical step above.
-          app-id: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_APP_ID }}
-          private-key: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }} # scope the token to the CALLER repo only
-
-      - name: 📦 Setup Node (semantic-release)
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "lts/*"
 
       - name: 📦 Setup .NET
         if: inputs.dotnet-version != ''
@@ -85,7 +65,47 @@ jobs:
           java-version: ${{ inputs.java-version }}
           cache: gradle
 
+      # ----- Build validation (non-main only: PRs, feature branches) -----
+      # Reuses the consumer contract as the build check: release-prepare.sh at a
+      # throwaway version builds every artifact exactly as a release would.
+      # On main this is SKIPPED — the canary's prepare hook below builds instead,
+      # so every event builds exactly once.
+      - name: 🏗️ Build validation (release-prepare.sh @ 0.0.0-ci)
+        if: github.ref_name != 'main'
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: scripts/release-prepare.sh "0.0.0-ci"
+
+      # ----- Release (main only) -----
+      - name: 🔐 Fetch secrets (Infisical, OIDC)
+        if: github.ref_name == 'main'
+        uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
+        with:
+          method: "oidc"
+          env-slug: "prod"
+          project-slug: "github-actions-for-endatix"
+          identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
+          recursive: true
+
+      - name: 🔑 Endatix Automations APP token (GitHub App)
+        if: github.ref_name == 'main'
+        id: app-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          # App id + private key are injected by the Infisical step above.
+          app-id: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_APP_ID }}
+          private-key: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }} # scope the token to the CALLER repo only
+
+      - name: 📦 Setup Node (semantic-release)
+        if: github.ref_name == 'main'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "lts/*"
+
       - name: 🐳 GHCR login
+        if: github.ref_name == 'main'
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
           registry: ghcr.io
@@ -93,6 +113,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }} # packages:write is the only write scope on this token
 
       - name: 🐤 semantic-release (canary channel)
+        if: github.ref_name == 'main'
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }} # App token, not the read-only job token
           DOCKER_IMAGE: ${{ inputs.docker-image }}

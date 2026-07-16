@@ -84,7 +84,10 @@ Copy these into `.github/workflows/`, replacing `<repo>` and the toolchain
 inputs (`dotnet-version` / `java-version` — set the ones your release scripts
 need; omit the others).
 
-`ci.yml` — your normal build job, plus the canary release on main:
+`ci.yml` — one call covers both PR validation and the canary release. Each
+event builds exactly once: on PRs/branches the shared pipeline runs your
+`release-prepare.sh` at the throwaway version `0.0.0-ci` (build check, nothing
+publishes); on pushes to main the canary release's prepare step is the build.
 
 ```yaml
 name: Build, Validate & Release
@@ -100,19 +103,16 @@ permissions:
   packages: write
   id-token: write
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      # ... your repo's own build & validation steps ...
-  canary:
-    needs: build
-    if: github.ref_name == 'main'
+  pipeline:
     uses: endatix/release-workflows/.github/workflows/canary.yml@v1
     with:
       docker-image: ghcr.io/endatix/<repo>
       dotnet-version: "10.x"
     secrets: inherit
 ```
+
+Repo-specific checks beyond the build (tests, linting) go in additional local
+jobs alongside `pipeline`.
 
 `release-start.yml` — the manual trigger you run to begin a stable release:
 
@@ -189,7 +189,8 @@ GitHub **Pre-release**, and your artifacts in the registry.
 | Credentials (Infisical, GitHub App, GHCR login) | here |
 | How to **build** artifacts | your repo (`scripts/release-prepare.sh`) |
 | How to **push** artifacts | your repo (`scripts/release-publish.sh`) |
-| Build/PR validation | your repo (`ci.yml` build job) |
+| PR build validation | here (runs your `release-prepare.sh` @ `0.0.0-ci` on non-main) |
+| Extra checks (tests, linting) | your repo (additional local jobs) |
 
 ## Versioning of these workflows
 
