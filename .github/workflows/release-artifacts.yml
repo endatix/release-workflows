@@ -30,7 +30,12 @@ on:
         type: string
         default: "image-retag"
       fetch-secrets:
-        description: "Fetch Infisical secrets (prod) into the job env — for rebuild-path publish scripts that need more than the job token (e.g. NUGET_API_KEY for nuget.org). Caller must grant id-token: write."
+        description: "Fetch Infisical secrets (prod) into the job env — for rebuild-path publish scripts that need more than the job token. Caller must grant id-token: write."
+        required: false
+        type: boolean
+        default: false
+      nuget-login:
+        description: "Mint a short-lived nuget.org API key via OIDC trusted publishing (NuGet/login) and export it as NUGET_API_KEY to the release scripts. Requires fetch-secrets: true (the nuget.org username comes from Infisical as ENDATIX_NUGET_ORG_USERNAME) and a trusted publishing policy on nuget.org for the caller repo + this workflow filename."
         required: false
         type: boolean
         default: false
@@ -68,6 +73,16 @@ jobs:
           identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
           recursive: true
 
+      # Short-lived nuget.org API key via OIDC trusted publishing — replaces a
+      # long-lived NUGET_API_KEY secret. Must run AFTER the Infisical step: the
+      # nuget.org username (profile name, not email) is injected by Infisical.
+      - name: 🔑 NuGet login (OIDC → temp API key)
+        if: inputs.nuget-login
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ env.ENDATIX_NUGET_ORG_USERNAME }}
+
       - name: 🐳 GHCR login
         if: inputs.docker-image != ''
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
@@ -102,6 +117,9 @@ jobs:
           GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
           HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
+          # Temp key from NuGet trusted publishing when nuget-login is on;
+          # falls back to an Infisical-provided NUGET_API_KEY otherwise.
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY || env.NUGET_API_KEY }}
         run: |
           case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac
           VERSION="${TAG#v}"

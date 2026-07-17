@@ -159,14 +159,21 @@ alternative for heavy suites: caller test jobs + `needs:`), the dormant
 `docker-image` is optional: package-only repos omit it (GHCR login and the
 image-retag path are skipped; `DOCKER_IMAGE` is exported empty).
 `release-artifacts.yml` also takes `fetch-secrets: true` to inject Infisical
-prod secrets into the rebuild path (caller grants `id-token: write`) — used
-when the publish script needs more than the job token (e.g. `NUGET_API_KEY`
-for nuget.org; the canary workflow injects Infisical secrets unconditionally).
+prod secrets into the rebuild path (caller grants `id-token: write`; the
+canary workflow injects Infisical secrets unconditionally), and
+`nuget-login: true` for nuget.org **OIDC trusted publishing**: `NuGet/login`
+mints a short-lived API key per run (no long-lived key stored), exported to
+the scripts as `NUGET_API_KEY` (falls back to an Infisical-provided
+`NUGET_API_KEY` when the input is off). The login step must run after
+Infisical — the nuget.org username arrives as `ENDATIX_NUGET_ORG_USERNAME`
+(profile name, not email). Requires a trusted publishing policy on nuget.org
+scoped to the caller repo + workflow filename (`release-artifacts.yml` — the
+caller stub and this reusable workflow share that filename deliberately).
 
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
 docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
 rebuild`), and **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
-GitHub Packages only, stables → GitHub Packages + nuget.org via
-`NUGET_API_KEY` from Infisical; `promotion: rebuild` + `fetch-secrets: true`;
+GitHub Packages only, stables → GitHub Packages + nuget.org via trusted
+publishing; `promotion: rebuild` + `fetch-secrets: true` + `nuget-login: true`;
 canary gated on unit + integration tests via `needs:` in its caller).

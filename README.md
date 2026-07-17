@@ -177,10 +177,16 @@ multi-artifact example).
 Notes:
 - `docker-image` is optional everywhere — omit it if your repo publishes no
   image (see [endatix/endatix](https://github.com/endatix/endatix), NuGet-only).
-- If your stable publish needs secrets beyond the job token (e.g. a nuget.org
-  API key), store them in Infisical (prod) and add `fetch-secrets: true` +
-  `id-token: write` to your release-artifacts caller. The canary workflow
-  injects Infisical secrets automatically.
+- If your stable publish needs secrets beyond the job token, store them in
+  Infisical (prod) and add `fetch-secrets: true` + `id-token: write` to your
+  release-artifacts caller. The canary workflow injects Infisical secrets
+  automatically.
+- Publishing stables to **nuget.org**: add `nuget-login: true` (with
+  `fetch-secrets: true`) — a short-lived API key is minted per run via OIDC
+  trusted publishing and exported as `NUGET_API_KEY`; no long-lived key is
+  stored. One-time setup: the nuget.org username in Infisical as
+  `ENDATIX_NUGET_ORG_USERNAME`, and a trusted publishing policy on nuget.org
+  (repo owner/name + workflow file `release-artifacts.yml`).
 - To gate the canary on tests, put your test jobs in `ci.yml` and give the
   `pipeline` job `needs: [your-test-jobs]`.
 
