@@ -20,14 +20,20 @@ on:
   workflow_call:
     inputs:
       docker-image:
-        description: "Container image name (e.g. ghcr.io/endatix/my-api)"
-        required: true
+        description: "Container image name (e.g. ghcr.io/endatix/my-api). Empty = repo publishes no image"
+        required: false
         type: string
+        default: ""
       promotion:
         description: "image-retag (default) or rebuild (required for NuGet/npm/Helm repos)"
         required: false
         type: string
         default: "image-retag"
+      fetch-secrets:
+        description: "Fetch Infisical secrets (prod) into the job env — for rebuild-path publish scripts that need more than the job token (e.g. NUGET_API_KEY for nuget.org). Caller must grant id-token: write."
+        required: false
+        type: boolean
+        default: false
       dotnet-version:
         description: "Optional .NET SDK version for the rebuild path"
         required: false
@@ -43,6 +49,8 @@ jobs:
   promote:
     name: Promote artifacts to stable
     runs-on: ubuntu-latest
+    environment:
+      name: Production # matches the Infisical OIDC identity binding
     steps:
       - name: 🔍 Checkout release tag
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -50,7 +58,18 @@ jobs:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0 # need all tags to find the canary pointing at this commit
 
+      - name: 🔐 Fetch secrets (Infisical, OIDC)
+        if: inputs.fetch-secrets
+        uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
+        with:
+          method: "oidc"
+          env-slug: "prod"
+          project-slug: "github-actions-for-endatix"
+          identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
+          recursive: true
+
       - name: 🐳 GHCR login
+        if: inputs.docker-image != ''
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
           registry: ghcr.io
@@ -87,7 +106,7 @@ jobs:
           case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac
           VERSION="${TAG#v}"
           CANARY_TAG=$(git tag --points-at HEAD -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1 || true)
-          if [ "$PROMOTION" = "image-retag" ] && [ -n "$CANARY_TAG" ]; then
+          if [ "$PROMOTION" = "image-retag" ] && [ -n "$DOCKER_IMAGE" ] && [ -n "$CANARY_TAG" ]; then
             echo "Promoting ${CANARY_TAG} image digest to ${VERSION} + latest (no rebuild)"
             docker buildx imagetools create \
               -t "${DOCKER_IMAGE}:${VERSION}" \

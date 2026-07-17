@@ -16,6 +16,8 @@ name: CI Pipeline (reusable)
 # Consumer contract (see README):
 #   - scripts/release-prepare.sh <version>   build artifacts (honors RELEASE_CHANNEL)
 #   - scripts/release-publish.sh <version>   push artifacts  (honors RELEASE_CHANNEL)
+#   - scripts/release-test.sh (OPTIONAL)     tests; runs on PRs and before every
+#     canary, never on the stable rebuild — alternative: caller test jobs + needs:
 #   - a dormant `stable` branch exists (semantic-release branch validation)
 #   - caller grants: contents: read, packages: write, id-token: write
 #     and passes `secrets: inherit`
@@ -24,9 +26,10 @@ on:
   workflow_call:
     inputs:
       docker-image:
-        description: "Container image name (e.g. ghcr.io/endatix/my-api)"
-        required: true
+        description: "Container image name (e.g. ghcr.io/endatix/my-api). Empty = repo publishes no image (GHCR login skipped; DOCKER_IMAGE exported empty)"
+        required: false
         type: string
+        default: ""
       dotnet-version:
         description: "Optional .NET SDK version to set up (e.g. 10.x)"
         required: false
@@ -76,6 +79,24 @@ jobs:
           DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: scripts/release-prepare.sh "0.0.0-ci"
 
+      # Optional contract hook: if the repo provides scripts/release-test.sh it
+      # runs on EVERY event — PR validation and again before a canary release
+      # (merge skew: main may differ from what the PR validated). It never runs
+      # on the stable rebuild (release-artifacts.yml): a stable promotes a
+      # commit whose canary already required green tests. The script may read
+      # GITHUB_REF / GITHUB_EVENT_NAME for main-vs-PR filtering and may
+      # parallelize internally. Repos with heavy multi-runner suites can keep
+      # tests as caller jobs gating via `needs:` instead.
+      - name: 🧪 Tests (release-test.sh, if present)
+        env:
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+        run: |
+          if [ -x scripts/release-test.sh ]; then
+            scripts/release-test.sh
+          else
+            echo "No scripts/release-test.sh — skipping (tests may live in caller jobs)"
+          fi
+
       # ----- Release (main only) -----
       - name: 🔐 Fetch secrets (Infisical, OIDC)
         if: github.ref_name == 'main'
@@ -105,7 +126,7 @@ jobs:
           node-version: "lts/*"
 
       - name: 🐳 GHCR login
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' && inputs.docker-image != ''
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
           registry: ghcr.io
