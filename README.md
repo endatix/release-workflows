@@ -69,6 +69,15 @@ chmod +x scripts/release-prepare.sh scripts/release-publish.sh
 
 A working reference lives in [endatix/test-release](https://github.com/endatix/test-release/tree/main/scripts).
 
+**Optional: `scripts/release-test.sh`** — if present, the pipeline runs it on
+PRs *and* again before every canary (main may differ from what the PR
+validated), but never on the stable rebuild (a stable promotes a commit whose
+canary already required green tests). It may read `GITHUB_REF` /
+`GITHUB_EVENT_NAME` and parallelize internally. Repos with heavy multi-runner
+test matrices can instead keep tests as local jobs in `ci.yml` gating the
+pipeline via `needs:` (separate logs and per-suite checks — see
+endatix/endatix).
+
 ### Step 2 — create the dormant `stable` branch
 
 ```bash
@@ -164,6 +173,16 @@ so unlike a Docker image they can't be digest-retagged; the stable release is
 rebuilt at the tagged commit via your release scripts instead (see
 [endatix/api-contracts](https://github.com/endatix/api-contracts) for a
 multi-artifact example).
+
+Notes:
+- `docker-image` is optional everywhere — omit it if your repo publishes no
+  image (see [endatix/endatix](https://github.com/endatix/endatix), NuGet-only).
+- If your stable publish needs secrets beyond the job token (e.g. a nuget.org
+  API key), store them in Infisical (prod) and add `fetch-secrets: true` +
+  `id-token: write` to your release-artifacts caller. The canary workflow
+  injects Infisical secrets automatically.
+- To gate the canary on tests, put your test jobs in `ci.yml` and give the
+  `pipeline` job `needs: [your-test-jobs]`.
 
 ### Step 4 — push and verify
 

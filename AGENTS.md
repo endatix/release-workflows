@@ -149,10 +149,24 @@ config version always matches the workflow version.
 ## Consumer contract (summary)
 
 Per adopting repo: `scripts/release-prepare.sh <version>` +
-`scripts/release-publish.sh <version>` (executable, honor the env above), the
-dormant `stable` branch, three thin caller stubs (see README), squash-merge
-PRs (merge commits with conventional titles double-count in notes).
+`scripts/release-publish.sh <version>` (executable, honor the env above),
+optionally `scripts/release-test.sh` (runs on PRs and before every canary —
+merge skew makes the re-run on main mandatory — never on the stable rebuild;
+alternative for heavy suites: caller test jobs + `needs:`), the dormant
+`stable` branch, three thin caller stubs (see README), squash-merge PRs
+(merge commits with conventional titles double-count in notes).
+
+`docker-image` is optional: package-only repos omit it (GHCR login and the
+image-retag path are skipped; `DOCKER_IMAGE` is exported empty).
+`release-artifacts.yml` also takes `fetch-secrets: true` to inject Infisical
+prod secrets into the rebuild path (caller grants `id-token: write`) — used
+when the publish script needs more than the job token (e.g. `NUGET_API_KEY`
+for nuget.org; the canary workflow injects Infisical secrets unconditionally).
 
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
-10.x`, default `image-retag` promotion) and **api-contracts** (NuGet ×2 + npm +
-docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion: rebuild`).
+10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
+docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
+rebuild`), and **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
+GitHub Packages only, stables → GitHub Packages + nuget.org via
+`NUGET_API_KEY` from Infisical; `promotion: rebuild` + `fetch-secrets: true`;
+canary gated on unit + integration tests via `needs:` in its caller).
