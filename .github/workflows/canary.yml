@@ -1,12 +1,18 @@
 name: CI Pipeline (reusable)
 
 # Reusable CI pipeline — ONE job, ONE build per event:
-#   • non-main (PRs, branches) → build validation ONLY: runs the consumer's
+#   • PRs / other branches → build validation ONLY: runs the consumer's
 #     release-prepare.sh with a throwaway version (0.0.0-ci). Nothing publishes.
 #   • push to main → canary release: semantic-release builds ONCE at the real
 #     version (prepare hook) and publishes vX.Y.Z-canary.N (main runs as a
 #     prerelease branch; N derived from existing tags: dense, collision-free,
 #     re-run on same HEAD is a no-op, resets after each stable release).
+#   • push to hotfix/X.Y.x → SAME flow on the maintenance line: publishes
+#     vX.Y.Z-hotfix.N prerelease builds (base = nearest stable reachable from
+#     the branch; the distinct -hotfix identifier cannot collide with main's
+#     -canary builds on a shared base). RELEASE_CHANNEL=hotfix — floating
+#     pointers never move. Consumers opt in by adding "hotfix/**" to their
+#     ci.yml pull_request/push branch filters.
 # Stable releases are cut by the companion release-start.yml /
 # release-artifacts.yml pair (reviewed draft → publish).
 #
@@ -68,13 +74,13 @@ jobs:
           java-version: ${{ inputs.java-version }}
           cache: gradle
 
-      # ----- Build validation (non-main only: PRs, feature branches) -----
+      # ----- Build validation (PRs and non-releasing branches) -----
       # Reuses the consumer contract as the build check: release-prepare.sh at a
       # throwaway version builds every artifact exactly as a release would.
-      # On main this is SKIPPED — the canary's prepare hook below builds instead,
-      # so every event builds exactly once.
+      # On main and hotfix/* this is SKIPPED — the release's prepare hook below
+      # builds instead, so every event builds exactly once.
       - name: 🏗️ Build validation (release-prepare.sh @ 0.0.0-ci)
-        if: github.ref_name != 'main'
+        if: github.ref_name != 'main' && !startsWith(github.ref_name, 'hotfix/')
         env:
           DOCKER_IMAGE: ${{ inputs.docker-image }}
         run: scripts/release-prepare.sh "0.0.0-ci"
@@ -97,9 +103,9 @@ jobs:
             echo "No scripts/release-test.sh — skipping (tests may live in caller jobs)"
           fi
 
-      # ----- Release (main only) -----
+      # ----- Release (main → canary; hotfix/* → hotfix prerelease) -----
       - name: 🔐 Fetch secrets (Infisical, OIDC)
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
         uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
         with:
           method: "oidc"
@@ -109,7 +115,7 @@ jobs:
           recursive: true
 
       - name: 🔑 Endatix Automations APP token (GitHub App)
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
         id: app-token
         uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
         with:
@@ -120,25 +126,27 @@ jobs:
           repositories: ${{ github.event.repository.name }} # scope the token to the CALLER repo only
 
       - name: 📦 Setup Node (semantic-release)
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "lts/*"
 
       - name: 🐳 GHCR login
-        if: github.ref_name == 'main' && inputs.docker-image != ''
+        if: (github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')) && inputs.docker-image != ''
         uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }} # packages:write is the only write scope on this token
 
-      - name: 🐤 semantic-release (canary channel)
-        if: github.ref_name == 'main'
+      - name: 🐤 semantic-release (canary / hotfix channel)
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }} # App token, not the read-only job token
           DOCKER_IMAGE: ${{ inputs.docker-image }}
-          RELEASE_CHANNEL: canary # release-publish.sh: do not move floating tags (docker latest, npm latest)
+          # Neither channel moves floating tags (docker latest, npm latest);
+          # npm dist-tag = the channel name (canary / hotfix).
+          RELEASE_CHANNEL: ${{ github.ref_name == 'main' && 'canary' || 'hotfix' }}
           # Standard environment for consumer release scripts — org-derived, exported
           # for every repo; repos that publish only a docker image simply ignore them.
           GH_PACKAGES_USER: ${{ github.actor }}
@@ -165,12 +173,19 @@ jobs:
           EOF
 
           # main as a PRERELEASE branch → semantic-release derives vX.Y.Z-canary.N
-          # from existing tags. The dormant `stable` branch only satisfies the
-          # ≥1-release-branch validation. Manually created stable tags (from the
-          # release-start flow) are picked up from git automatically.
+          # from existing tags; hotfix/* branches do the same with the -hotfix
+          # identifier (base = nearest stable reachable from the branch, so a
+          # hotfix line computes its own versions). The dormant `stable` branch
+          # only satisfies the ≥1-release-branch validation. Manually created
+          # stable tags (from the release-start flow) are picked up from git
+          # automatically.
           cat > "${CFG}/release.config.cjs" <<'EOF'
           module.exports = {
-            branches: ["stable", { name: "main", prerelease: "canary", channel: "canary" }],
+            branches: [
+              "stable",
+              { name: "main", prerelease: "canary", channel: "canary" },
+              { name: "hotfix/*", prerelease: "hotfix", channel: "hotfix" },
+            ],
             plugins: [
               `${__dirname}/analyze-commits.cjs`,
               ["@semantic-release/release-notes-generator", { preset: "conventionalcommits" }],

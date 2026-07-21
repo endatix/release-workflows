@@ -204,6 +204,60 @@ GitHub **Pre-release**, and your artifacts in the registry.
   artifacts (including `latest`) follow automatically.
 - **Abandon a started release**: delete the draft. Nothing was tagged or shipped.
 
+## Hotfixes & maintenance lines
+
+To patch a stable release without shipping the unreleased work on `main`, each
+version line gets **one long-lived branch named `hotfix/X.Y.x`** (the line, not
+a single version — it produces `X.Y.1`, `X.Y.2`, … over its lifetime):
+
+```bash
+git checkout -b hotfix/0.8.x v0.8.0      # branch from the line's stable tag
+git push -u origin hotfix/0.8.x
+```
+
+The branch behaves like a mini-`main` for its line:
+
+1. **Fixes arrive by PR** targeting `hotfix/0.8.x` (the `hotfix/**` entries in
+   the caller's `pull_request`/`push` filters make PRs validate exactly like
+   PRs to main), or by cherry-pick from main.
+2. **Every push/merge to the branch publishes a prerelease build**
+   `0.8.1-hotfix.N` — same artifacts, git tag, and GitHub prerelease as a
+   canary. The distinct `-hotfix` identifier can never collide with main's
+   `-canary` builds even when both lines share a base version. Nothing
+   floating moves; npm uses the `hotfix` dist-tag.
+3. **Releasing**: Actions → *Start Stable Release* with **ref** =
+   `hotfix/0.8.x`, **bump** = `patch` → review the draft → **Publish
+   release**. The tag is created at the **branch's commit** — the release
+   contains the line plus its fixes and *never anything from main*, regardless
+   of any merges before or after.
+4. **Repeated patches just work**: after `v0.8.1` is published (its tag lives
+   on the branch), further pushes build `0.8.2-hotfix.N`, and the next
+   promotion yields `v0.8.2`. The version base is always the nearest stable
+   tag reachable from the branch — the branch *name* is never parsed.
+
+Rules that keep this safe:
+
+- **Older-line releases become *maintenance* automatically.** If a newer
+  stable exists (releasing `v0.8.1` while `v0.9.0` is out), the draft is
+  created un-"Latest"-ed and publishing moves no floating pointers: docker
+  `latest` stays, npm gets `maintenance` instead of `latest`, nuget.org sorts
+  by semver on its own.
+- **Carry fixes across lines by cherry-pick, not branch merges.** These repos
+  squash-merge, and repeatedly squash-merging a long-lived branch into main
+  re-presents already-merged commits. Either land the fix on main first and
+  cherry-pick it into `hotfix/X.Y.x`, or fix the line first and cherry-pick to
+  main via a small PR. Both directions are fine — but the fix **must** reach
+  main, or it regresses in the next release.
+- **One hotfix branch per line** (the `X.Y.x` name makes this natural). Two
+  branches on the same line would race for the same `-hotfix.N` numbers.
+- **Main's numbering is untouched by all of this.** Canaries and stables from
+  main always select the highest reachable release; hotfix tags on the side
+  line sort lower (or aren't reachable at all under squash-merge) and are
+  simply never selected.
+- Delete the branch only when the line goes out of support. If it was deleted
+  early, recreate it from the line's newest tag:
+  `git checkout -b hotfix/0.8.x v0.8.1` — tags are the durable anchors.
+
 ## Who owns what
 
 | Concern | Lives in |

@@ -85,6 +85,46 @@ config version always matches the workflow version.
   carries the inverse. Consumers therefore need no local build job — extra
   checks (tests, lint) go in additional local caller jobs.
 
+## Hotfix / maintenance mechanics
+
+- Convention: **one long-lived branch per line, named `hotfix/X.Y.x`** (cut
+  from the line's stable tag). The name is never parsed — all version math is
+  tag-reachability — but the convention keeps one branch per line and stays
+  truthful across repeated patches (`v0.8.1`, `v0.8.2`, … from one branch).
+- **Prerelease builds per push**: `canary.yml` treats `hotfix/*` as a second
+  prerelease lineage (`{ name: "hotfix/*", prerelease: "hotfix", channel:
+  "hotfix" }`); pushes publish `X.Y.Z-hotfix.N` with base = nearest stable
+  reachable from the branch. The `-hotfix` identifier is deliberately distinct
+  from `-canary`: on a shared base (newest-line hotfix) identical identifiers
+  would collide in tags and registries. `RELEASE_CHANNEL=hotfix` on these
+  pushes; consumers' `pull_request`/`push` filters add `"hotfix/**"`.
+- `release-start.yml` has two modes: canary (default) and **ref mode** (`ref`
+  input = branch/SHA, typically `hotfix/X.Y.x`). In BOTH modes the version
+  base is the **nearest stable ancestor of the released commit** (`git
+  describe` from its SHA) — never the globally newest stable — so hotfixing an
+  older line computes the right version, and squash-merge histories can't
+  break ancestry assumptions (no descendant guard: ancestry by construction).
+- **Channel is decided at promote time**, not draft time: release-artifacts
+  compares the published tag against the highest stable tag; equal → `stable`,
+  lower → `maintenance`. Maintenance exports `RELEASE_CHANNEL=maintenance` to
+  the scripts and skips `-t latest` in the image-retag path (which also
+  recognizes `-hotfix.N` tags for byte-identical promotion). Contract rule:
+  publish scripts move floating pointers ONLY when `RELEASE_CHANNEL=stable`;
+  npm dist-tag = channel name otherwise (canary/hotfix/maintenance).
+- The draft for a maintenance release is created with `--latest=false` so
+  publishing can't steal the GitHub "Latest" badge from the newer line.
+- Reachability: on squash-merge repos a hotfix tag NEVER becomes reachable
+  from `main` (the squashed commit is a new object). That's fine everywhere:
+  semantic-release ignores unreachable tags (main's canaries continue on their
+  current base and re-sync at the next stable), the ancestor-based base
+  ignores them too, and the version-exists guard uses `git tag -l` (all tags),
+  so collisions are still caught immediately. Cross-line fix transport is by
+  **cherry-pick** (squash-merge makes repeated whole-branch merges painful);
+  the fix must reach main or it regresses in the next release.
+- After a newest-line hotfix (e.g. `v0.8.1` of latest `v0.8.0`), the next
+  stable from main must be minor+ — a patch would collide with the hotfix
+  version, and the version-exists guard reports it.
+
 ## Stable flow details
 
 - `release-start.yml` computes next version from the last stable tag

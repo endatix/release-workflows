@@ -1,12 +1,22 @@
 name: Start Stable Release (reusable)
 
 # Step 1 of the human-reviewed stable release flow: creates a DRAFT GitHub
-# release pinned to a canary's commit, with aggregated notes generated from the
-# conventional commits since the last stable tag.
+# release with aggregated notes generated from the conventional commits since
+# the base stable release. Two modes:
+#
+#   Canary mode (default): promote a canary tag (newest, or canary-tag input).
+#   Hotfix mode (ref input): release an arbitrary ref — typically a hotfix/*
+#     branch cut from a stable tag.
+#   In BOTH modes the version base is the NEAREST STABLE ANCESTOR of the
+#     released commit, so patching an older line computes the right version
+#     (e.g. v0.8.1 while v0.9.0 exists). Maintenance releases (not the highest
+#     stable) are drafted with --latest=false so publishing cannot steal the
+#     "Latest" badge, and release-artifacts publishes them without moving
+#     floating tags.
 #
 # A draft creates NO git tag and publishes NO artifacts — edit the notes in the
-# GitHub UI, then click "Publish release". Publishing creates the vX.Y.Z tag,
-# which triggers the caller's release-artifacts workflow to promote artifacts.
+# GitHub UI at your leisure, then click "Publish release". Publishing creates
+# the vX.Y.Z tag, which triggers the caller's release-artifacts workflow.
 # Deleting the draft instead abandons the release — nothing was tagged or shipped.
 #
 # Caller grants: contents: write. GITHUB_TOKEN is passed implicitly.
@@ -15,15 +25,20 @@ on:
   workflow_call:
     inputs:
       canary-tag:
-        description: "Canary tag to promote (empty = newest canary)"
+        description: "Canary tag to promote (empty = newest canary; ignored when ref is set)"
         required: false
         type: string
         default: ""
       bump:
-        description: "Version bump relative to the last stable release (major/minor/patch)"
+        description: "Version bump relative to the base stable release (major/minor/patch)"
         required: false
         type: string
         default: "minor"
+      ref:
+        description: "Hotfix mode: branch or SHA to release from (empty = canary mode)"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   draft:
@@ -40,15 +55,36 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CANARY_INPUT: ${{ inputs.canary-tag }}
           BUMP: ${{ inputs.bump }}
+          REF_INPUT: ${{ inputs.ref }}
         run: |
-          # --- resolve the canary to promote ---
-          CANARY_TAG="${CANARY_INPUT:-$(git tag -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1)}"
-          [ -n "$CANARY_TAG" ] || { echo "::error::No canary tag found to promote"; exit 1; }
-          SHA=$(git rev-parse -q --verify "refs/tags/${CANARY_TAG}^{commit}") \
-            || { echo "::error::Tag ${CANARY_TAG} does not exist"; exit 1; }
+          # --- resolve what to release ---
+          if [ -n "$REF_INPUT" ]; then
+            # HOTFIX MODE: release an arbitrary ref (typically a hotfix/* branch).
+            SHA=$(git rev-parse -q --verify "${REF_INPUT}^{commit}" || git rev-parse -q --verify "origin/${REF_INPUT}^{commit}") \
+              || { echo "::error::Ref ${REF_INPUT} not found"; exit 1; }
+            SOURCE_DESC="\`${REF_INPUT}\`"
+          else
+            # CANARY MODE (default): promote a canary tag.
+            CANARY_TAG="${CANARY_INPUT:-$(git tag -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1)}"
+            [ -n "$CANARY_TAG" ] || { echo "::error::No canary tag found to promote"; exit 1; }
+            SHA=$(git rev-parse -q --verify "refs/tags/${CANARY_TAG}^{commit}") \
+              || { echo "::error::Tag ${CANARY_TAG} does not exist"; exit 1; }
+            SOURCE_DESC="\`${CANARY_TAG}\`"
+          fi
 
-          # --- compute the next stable version ---
-          LAST_STABLE=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- - | head -1 || true)
+          # --- base version: the nearest stable ANCESTOR of the released commit ---
+          # Same rule in both modes. This makes hotfixes of older lines compute
+          # the right version, and stays correct on squash-merge repos, where a
+          # hotfix tag never becomes reachable from main (the squashed commit is
+          # a different object) and must simply be ignored by main's lineage.
+          # The version-exists guard below still checks ALL tags, so an
+          # already-taken version fails loudly regardless of reachability.
+          LAST_STABLE=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude 'v*-*' "$SHA" 2>/dev/null || true)
+          if [ -z "$LAST_STABLE" ] && [ -n "$REF_INPUT" ]; then
+            echo "::error::No stable tag is an ancestor of ${REF_INPUT}"; exit 1
+          fi
+
+          # --- compute the next version from the base ---
           BASE="${LAST_STABLE#v}"; BASE="${BASE:-0.0.0}"
           IFS=. read -r MAJOR MINOR PATCH <<< "$BASE"
           case "$BUMP" in
@@ -57,18 +93,25 @@ jobs:
             patch) NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))" ;;
             *) echo "::error::Invalid bump '${BUMP}' (major/minor/patch)"; exit 1 ;;
           esac
-
-          # --- sanity checks ---
-          if [ -n "$LAST_STABLE" ]; then
-            git merge-base --is-ancestor "$LAST_STABLE" "$SHA" \
-              || { echo "::error::${CANARY_TAG} (${SHA}) is not a descendant of ${LAST_STABLE} — already released?"; exit 1; }
-          fi
           if git rev-parse -q --verify "refs/tags/v${NEXT}" >/dev/null \
              || gh release view "v${NEXT}" --json isDraft >/dev/null 2>&1; then
             echo "::error::v${NEXT} already exists (tag or draft) — publish/delete it first"; exit 1
           fi
 
-          # --- generate aggregated notes (conventional commits since last stable) ---
+          # --- current line or maintenance line? ---
+          # If vNEXT would not be the highest stable, this is a maintenance
+          # release: draft with --latest=false (publishing must not steal the
+          # "Latest" badge) and release-artifacts will not move floating tags.
+          HIGHEST=$({ git tag -l 'v[0-9]*' | grep -v -- - ; echo "v${NEXT}"; } | sort -V | tail -1)
+          if [ "$HIGHEST" = "v${NEXT}" ]; then
+            LATEST_FLAG="--latest"
+            LINE_NOTE="current line — publishing will mark it the **Latest** release and move floating tags"
+          else
+            LATEST_FLAG="--latest=false"
+            LINE_NOTE="maintenance line (highest stable is ${HIGHEST}) — will NOT be marked Latest; floating tags will not move"
+          fi
+
+          # --- generate aggregated notes (conventional commits since base) ---
           RANGE="${LAST_STABLE:+${LAST_STABLE}..}${SHA}"
           section() { # <type-regex> <heading>
             local entries
@@ -77,7 +120,7 @@ jobs:
             [ -n "$entries" ] && printf '### %s\n\n%s\n\n' "$2" "$entries" || true
           }
           {
-            printf 'Promotes `%s` (`%s`) — all changes since %s.\n\n' "$CANARY_TAG" "${SHA:0:7}" "${LAST_STABLE:-the beginning}"
+            printf 'Promotes %s (`%s`) — all changes since %s.\n\n' "$SOURCE_DESC" "${SHA:0:7}" "${LAST_STABLE:-the beginning}"
             section feat "Features"
             section fix "Bug Fixes"
             section perf "Performance"
@@ -90,14 +133,16 @@ jobs:
           # --- create the draft (no tag is created for drafts) ---
           URL=$(gh release create "v${NEXT}" \
             --draft \
+            "$LATEST_FLAG" \
             --target "$SHA" \
             --title "v${NEXT}" \
             --notes-file notes.md)
           {
             echo "## Draft release v${NEXT} created"
             echo
-            echo "- Source: \`${CANARY_TAG}\` (\`${SHA}\`)"
+            echo "- Source: ${SOURCE_DESC} (\`${SHA}\`), base: ${LAST_STABLE:-none}"
+            echo "- ${LINE_NOTE}"
             echo "- Review and edit the notes, then click **Publish release**: ${URL}"
-            echo "- Publishing creates the tag and triggers the artifact promotion."
+            echo "- Publishing creates the tag and triggers the artifact publication."
           } >> "$GITHUB_STEP_SUMMARY"
           echo "Draft created: ${URL}"

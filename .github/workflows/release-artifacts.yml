@@ -110,7 +110,6 @@ jobs:
           TAG: ${{ github.event.release.tag_name }}
           DOCKER_IMAGE: ${{ inputs.docker-image }}
           PROMOTION: ${{ inputs.promotion }}
-          RELEASE_CHANNEL: stable # rebuild path: release-publish.sh may move floating tags
           # Standard environment for consumer release scripts (rebuild path) —
           # org-derived; repos that publish only a docker image ignore them.
           GH_PACKAGES_USER: ${{ github.actor }}
@@ -123,13 +122,24 @@ jobs:
         run: |
           case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac
           VERSION="${TAG#v}"
-          CANARY_TAG=$(git tag --points-at HEAD -l 'v[0-9]*-canary.*' --sort=-v:refname | head -1 || true)
+
+          # Channel: stable when this tag is the highest stable version, else a
+          # maintenance release (hotfix of an older line). Maintenance must not
+          # move floating pointers — docker `latest` here, and consumer publish
+          # scripts only move theirs when RELEASE_CHANNEL=stable.
+          HIGHEST=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v -- - | head -1)
+          if [ "$TAG" = "$HIGHEST" ]; then RELEASE_CHANNEL=stable; else RELEASE_CHANNEL=maintenance; fi
+          export RELEASE_CHANNEL
+          echo "Release channel: ${RELEASE_CHANNEL} (this: ${TAG}, highest stable: ${HIGHEST})"
+
+          # A canary OR hotfix prerelease build at this commit can be promoted
+          # byte-identically (docker digest retag).
+          CANARY_TAG=$(git tag --points-at HEAD -l 'v[0-9]*-canary.*' -l 'v[0-9]*-hotfix.*' --sort=-v:refname | head -1 || true)
           if [ "$PROMOTION" = "image-retag" ] && [ -n "$DOCKER_IMAGE" ] && [ -n "$CANARY_TAG" ]; then
-            echo "Promoting ${CANARY_TAG} image digest to ${VERSION} + latest (no rebuild)"
-            docker buildx imagetools create \
-              -t "${DOCKER_IMAGE}:${VERSION}" \
-              -t "${DOCKER_IMAGE}:latest" \
-              "${DOCKER_IMAGE}:${CANARY_TAG#v}"
+            IMAGE_TAGS=(-t "${DOCKER_IMAGE}:${VERSION}")
+            if [ "$RELEASE_CHANNEL" = "stable" ]; then IMAGE_TAGS+=(-t "${DOCKER_IMAGE}:latest"); fi
+            echo "Promoting ${CANARY_TAG} image digest to ${VERSION} (no rebuild; latest: ${RELEASE_CHANNEL})"
+            docker buildx imagetools create "${IMAGE_TAGS[@]}" "${DOCKER_IMAGE}:${CANARY_TAG#v}"
           else
             echo "Rebuilding at the tag (promotion=${PROMOTION}, canary tag: ${CANARY_TAG:-none})"
             scripts/release-prepare.sh "$VERSION"
