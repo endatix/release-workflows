@@ -87,7 +87,7 @@ git branch stable main && git push origin stable
 Required once, by semantic-release's branch validation. Nothing is ever
 committed to it and no release runs from it — just leave it alone.
 
-### Step 3 — add the three caller workflows
+### Step 3 — add the four caller workflows
 
 Copy these into `.github/workflows/`, replacing `<repo>` and the toolchain
 inputs (`dotnet-version` / `java-version` — set the ones your release scripts
@@ -147,6 +147,27 @@ jobs:
     with:
       canary-tag: ${{ inputs.canary_tag }}
       bump: ${{ inputs.bump }}
+```
+
+`release-hotfix.yml` — the one-field entry point for hotfix lines (always a
+patch on the chosen line; see the Hotfixes section):
+
+```yaml
+name: Start Hotfix Release
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Hotfix line branch to release from (e.g. hotfix/0.8.x)"
+        required: true
+permissions:
+  contents: write
+jobs:
+  draft:
+    uses: endatix/release-workflows/.github/workflows/release-start.yml@v1
+    with:
+      ref: ${{ inputs.branch }}
+      bump: patch
 ```
 
 `release-artifacts.yml` — reacts when you publish the reviewed draft:
@@ -225,11 +246,14 @@ The branch behaves like a mini-`main` for its line:
    canary. The distinct `-hotfix` identifier can never collide with main's
    `-canary` builds even when both lines share a base version. Nothing
    floating moves; npm uses the `hotfix` dist-tag.
-3. **Releasing**: Actions → *Start Stable Release* with **ref** =
-   `hotfix/0.8.x`, **bump** = `patch` → review the draft → **Publish
-   release**. The tag is created at the **branch's commit** — the release
-   contains the line plus its fixes and *never anything from main*, regardless
-   of any merges before or after.
+3. **Releasing**: Actions → *Start Hotfix Release* → enter the line branch
+   (`hotfix/0.8.x`) — that's the only input; the bump is always `patch` →
+   review the draft → **Publish release**. The tag is created at the
+   **branch's commit** — the release contains the line plus its fixes and
+   *never anything from main*, regardless of any merges before or after.
+   (The underlying reusable workflow is the same as Start Stable Release;
+   the dedicated one-field entry point exists so a hotfix can't accidentally
+   be cut with a minor/major bump or from the wrong source.)
 4. **Repeated patches just work**: after `v0.8.1` is published (its tag lives
    on the branch), further pushes build `0.8.2-hotfix.N`, and the next
    promotion yields `v0.8.2`. The version base is always the nearest stable

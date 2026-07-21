@@ -104,6 +104,10 @@ config version always matches the workflow version.
   describe` from its SHA) — never the globally newest stable — so hotfixing an
   older line computes the right version, and squash-merge histories can't
   break ancestry assumptions (no descendant guard: ancestry by construction).
+  Consumers expose ref mode ONLY through a dedicated one-field caller stub
+  (`release-hotfix.yml`: branch input, `bump: patch` hardcoded) — the Start
+  Stable Release form deliberately has no `ref`, so a hotfix can't be cut
+  with the wrong bump and a promotion can't accidentally target a branch.
 - **Channel is decided at promote time**, not draft time: release-artifacts
   compares the published tag against the highest stable tag; equal → `stable`,
   lower → `maintenance`. Maintenance exports `RELEASE_CHANNEL=maintenance` to
