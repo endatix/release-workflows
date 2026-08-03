@@ -177,10 +177,16 @@ config version always matches the workflow version.
 - This repo is **private**: callers get "workflow was not found" unless
   `gh api -X PUT repos/endatix/release-workflows/actions/permissions/access -f access_level=organization`
   is set (GitHub reports missing access as not-found).
-- `v1` is a **floating tag** — it does not follow `main`. After any change
-  here: `git tag -f v1 && git push -f origin v1`, or callers keep the old
-  behavior (and fail on inputs the old commit doesn't declare). Breaking
-  contract changes get a new `v2` instead. Consumers never track `@main`.
+- **Consumers pin by commit SHA**, with `# v1` as a trailing comment — not
+  `@v1`. Tracking the mutable tag means a repo picks up new workflow code on its
+  next release with no diff and no review, and the caller no longer records which
+  version ran. `v1` remains as a **human-readable pointer** to the current
+  contract: move it after a change here (`git tag -f v1 <sha> && git push -f
+  origin v1`) so `git ls-remote … refs/tags/v1` resolves what to pin to, but
+  nothing should track it. Breaking contract changes get a new `v2` instead.
+  Consumers never track `@main`.
+  Bumping a consumer is then a visible one-line diff, which is also the moment
+  its release path gets re-reviewed — the pinned SHA is what actually runs.
 - Caller `env:` does not flow into a called workflow — repo-specific values
   travel as `inputs`; org-constant values are derived from the `github` context.
 - A `uses:` job runs on its own runner: toolchains must be set up inside the

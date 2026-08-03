@@ -113,7 +113,7 @@ permissions:
   id-token: write
 jobs:
   pipeline:
-    uses: endatix/release-workflows/.github/workflows/canary.yml@v1
+    uses: endatix/release-workflows/.github/workflows/canary.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
     with:
       docker-image: ghcr.io/endatix/<repo>
       dotnet-version: "10.x"
@@ -143,7 +143,7 @@ permissions:
   contents: write
 jobs:
   draft:
-    uses: endatix/release-workflows/.github/workflows/release-start.yml@v1
+    uses: endatix/release-workflows/.github/workflows/release-start.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
     with:
       canary-tag: ${{ inputs.canary_tag }}
       bump: ${{ inputs.bump }}
@@ -164,7 +164,7 @@ permissions:
   contents: write
 jobs:
   draft:
-    uses: endatix/release-workflows/.github/workflows/release-start.yml@v1
+    uses: endatix/release-workflows/.github/workflows/release-start.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
     with:
       ref: ${{ inputs.branch }}
       bump: patch
@@ -182,7 +182,7 @@ permissions:
 jobs:
   promote:
     if: ${{ !github.event.release.prerelease }}
-    uses: endatix/release-workflows/.github/workflows/release-artifacts.yml@v1
+    uses: endatix/release-workflows/.github/workflows/release-artifacts.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
     with:
       docker-image: ghcr.io/endatix/<repo>
       dotnet-version: "10.x"
@@ -202,12 +202,29 @@ Notes:
   Infisical (prod) and add `fetch-secrets: true` + `id-token: write` to your
   release-artifacts caller. The canary workflow injects Infisical secrets
   automatically.
-- Publishing stables to **nuget.org**: add `nuget-login: true` (with
-  `fetch-secrets: true`) — a short-lived API key is minted per run via OIDC
-  trusted publishing and exported as `NUGET_API_KEY`; no long-lived key is
-  stored. One-time setup: the nuget.org username in Infisical as
-  `ENDATIX_NUGET_ORG_USERNAME`, and a trusted publishing policy on nuget.org
-  (repo owner/name + workflow file `release-artifacts.yml`).
+- Publishing stables to **nuget.org**: a short-lived API key is minted per run
+  via OIDC trusted publishing, so no long-lived key is stored. One-time setup:
+  the nuget.org username in Infisical as `ENDATIX_NUGET_ORG_USERNAME` — this must
+  be the **individual profile name of the policy creator**, not an organization —
+  plus a trusted publishing policy on nuget.org. Two ways to wire it, and the
+  choice determines what that policy must be scoped to:
+
+  | | `nuget-login: true` | `upload-nuget-artifacts: true` |
+  |---|---|---|
+  | Where the login runs | this shared workflow | **your** repo |
+  | Policy must be scoped to | `endatix/release-workflows` | **your repo** |
+  | Trust boundary | every consumer of this workflow | just your repo |
+  | Push happens in | your `release-publish.sh` | a job in your caller |
+
+  OIDC's `job_workflow_ref` claim names the workflow where the job is *defined*,
+  so a `NuGet/login` here always presents `endatix/release-workflows` — a policy
+  scoped to your repo is rejected with a claim mismatch. The minted key cannot be
+  handed back to your caller either (`NuGet/login` marks it a secret, and GitHub
+  redacts secrets from job outputs), so per-repo trust requires moving the *push*
+  into your workflow. See [endatix/endatix](https://github.com/endatix/endatix)
+  `.github/workflows/release-artifacts.yml` for a working example of the second
+  form, and [endatix/endatix-relay](https://github.com/endatix/endatix-relay) for
+  a repo that logs in from its own workflow directly.
 - To gate the canary on tests, put your test jobs in `ci.yml` and give the
   `pipeline` job `needs: [your-test-jobs]`.
 
@@ -297,8 +314,29 @@ Rules that keep this safe:
 
 ## Versioning of these workflows
 
-Consumers pin `@v1`. Breaking changes to the contract (inputs, script
-interface) bump to `v2` — consumers move deliberately; never track `@main`.
+**Pin by commit SHA, with the version as a trailing comment:**
+
+```yaml
+uses: endatix/release-workflows/.github/workflows/canary.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
+```
+
+A mutable tag is a supply-chain risk and an operational one: `v1` is force-moved
+whenever this repo changes, so a repo tracking `@v1` silently picks up new
+workflow code on its next release with no diff, no review, and no way to tell
+from the caller which version actually ran. A SHA is immutable and shows up in a
+pull request when it changes. It is the same reason every third-party action in
+these workflows is SHA-pinned.
+
+`v1` still exists as a human-readable pointer to the current contract — it is
+what the comment refers to, and what you resolve when bumping a pin — but nothing
+should *track* it. Breaking changes to the contract (inputs, script interface)
+bump to `v2`; consumers move deliberately. Never track `@main`.
+
+To bump a consumer: resolve the tag, then update the pin.
+
+```bash
+git ls-remote https://github.com/endatix/release-workflows refs/tags/v1
+```
 
 ## Org prerequisites (already configured)
 
