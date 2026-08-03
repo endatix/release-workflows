@@ -113,7 +113,7 @@ permissions:
   id-token: write
 jobs:
   pipeline:
-    uses: endatix/release-workflows/.github/workflows/canary.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
+    uses: endatix/release-workflows/.github/workflows/canary.yml@8e04473b8951790b94f7a4486e47d4e714dac9a3 # v1
     with:
       docker-image: ghcr.io/endatix/<repo>
       dotnet-version: "10.x"
@@ -143,7 +143,7 @@ permissions:
   contents: write
 jobs:
   draft:
-    uses: endatix/release-workflows/.github/workflows/release-start.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
+    uses: endatix/release-workflows/.github/workflows/release-start.yml@8e04473b8951790b94f7a4486e47d4e714dac9a3 # v1
     with:
       canary-tag: ${{ inputs.canary_tag }}
       bump: ${{ inputs.bump }}
@@ -164,7 +164,7 @@ permissions:
   contents: write
 jobs:
   draft:
-    uses: endatix/release-workflows/.github/workflows/release-start.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
+    uses: endatix/release-workflows/.github/workflows/release-start.yml@8e04473b8951790b94f7a4486e47d4e714dac9a3 # v1
     with:
       ref: ${{ inputs.branch }}
       bump: patch
@@ -182,7 +182,7 @@ permissions:
 jobs:
   promote:
     if: ${{ !github.event.release.prerelease }}
-    uses: endatix/release-workflows/.github/workflows/release-artifacts.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
+    uses: endatix/release-workflows/.github/workflows/release-artifacts.yml@8e04473b8951790b94f7a4486e47d4e714dac9a3 # v1
     with:
       docker-image: ghcr.io/endatix/<repo>
       dotnet-version: "10.x"
@@ -317,7 +317,7 @@ Rules that keep this safe:
 **Pin by commit SHA, with the version as a trailing comment:**
 
 ```yaml
-uses: endatix/release-workflows/.github/workflows/canary.yml@7056fe678e52a4a50af23d14cef11a5a2b4dcd27 # v1
+uses: endatix/release-workflows/.github/workflows/canary.yml@8e04473b8951790b94f7a4486e47d4e714dac9a3 # v1
 ```
 
 A mutable tag is a supply-chain risk and an operational one: `v1` is force-moved
