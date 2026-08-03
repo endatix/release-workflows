@@ -35,7 +35,30 @@ on:
         type: boolean
         default: false
       nuget-login:
-        description: "Mint a short-lived nuget.org API key via OIDC trusted publishing (NuGet/login) and export it as NUGET_API_KEY to the release scripts. Requires fetch-secrets: true (the nuget.org username comes from Infisical as ENDATIX_NUGET_ORG_USERNAME) and a trusted publishing policy on nuget.org for the caller repo + this workflow filename."
+        description: >-
+          Mint a short-lived nuget.org API key via OIDC trusted publishing (NuGet/login) and
+          export it as NUGET_API_KEY to the release scripts. Requires fetch-secrets: true (the
+          nuget.org username comes from Infisical as ENDATIX_NUGET_ORG_USERNAME, which must be
+          an INDIVIDUAL's nuget.org profile name — the policy creator — not an organization).
+          CAUTION: the trusted publishing policy must be scoped to THIS repo
+          (endatix/release-workflows) and THIS filename, not the caller's. OIDC's
+          job_workflow_ref claim names the workflow where the job is defined, so a policy
+          scoped to the caller repo will be rejected. That makes the trust boundary "any
+          consumer of this shared workflow". Callers wanting per-repo trust should instead set
+          nuget-login: false + upload-nuget-artifacts: true and push from their own workflow.
+        required: false
+        type: boolean
+        default: false
+      upload-nuget-artifacts:
+        description: >-
+          Upload build/packages/nuget/*.nupkg as a workflow artifact so the CALLER can push
+          them to nuget.org from its own workflow. Needed when the caller authenticates to
+          nuget.org with OIDC trusted publishing: the OIDC job_workflow_ref claim names the
+          workflow where the job is DEFINED, so a NuGet/login here presents
+          endatix/release-workflows, never the caller's repo. The minted key cannot be handed
+          back either — NuGet/login marks it a secret and GitHub redacts secrets from job
+          outputs — so the push has to move to the key, not the other way round.
+          Use with nuget-login: false. Only meaningful on the rebuild path.
         required: false
         type: boolean
         default: false
@@ -145,3 +168,15 @@ jobs:
             scripts/release-prepare.sh "$VERSION"
             scripts/release-publish.sh "$VERSION"
           fi
+
+      # Hand the built packages to the caller so it can push them to nuget.org under its
+      # OWN job_workflow_ref claim. See the upload-nuget-artifacts input for why the push
+      # cannot stay here and why the key cannot be passed back.
+      - name: 📤 Upload NuGet packages for the caller
+        if: inputs.upload-nuget-artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nuget-packages-${{ github.event.release.tag_name }}
+          path: build/packages/nuget/*.nupkg
+          if-no-files-found: error # a silent empty artifact would fail the caller confusingly
+          retention-days: 7
