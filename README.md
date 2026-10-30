@@ -124,10 +124,27 @@ Repo-specific checks beyond the build (tests, linting) go in additional local
 jobs alongside `pipeline`.
 
 Every shared workflow takes an optional `runner` input (default
-`ubuntu-latest`). Private repos pass a self-hosted runner scale set name, e.g.
-`runner: endatix-docker` for `canary.yml` / `release-artifacts.yml` (they build
-or push images) and `runner: endatix-light` for `release-start.yml`. Only the
-calling repository needs access to the runner group.
+`ubuntu-latest`; an empty value also means the default). Private repos pass a
+self-hosted runner scale set name, e.g. `runner: endatix-docker` for
+`canary.yml` / `release-artifacts.yml` (they build or push images) and
+`runner: endatix-light` for `release-start.yml`:
+
+```yaml
+    with:
+      docker-image: ghcr.io/endatix/<repo>
+      dotnet-version: "10.x"
+      runner: endatix-docker
+```
+
+Only the calling repository needs access to the runner group. On such a runner
+the workflows set up .NET / the JDK from their inputs, Node for
+semantic-release on main and hotfix/*, and gh for release-start; anything else
+your `release-*.sh` scripts call they must install.
+
+> **After this change merges:** the examples' pins (`8e04473…`) predate the
+> `runner` input. Squash-merging makes a new commit, so once it lands, move
+> `v1` to it and update every example SHA in this file to it; the branch
+> commit that consumers may have pinned for testing becomes unreachable.
 
 `release-start.yml` — the manual trigger you run to begin a stable release:
 

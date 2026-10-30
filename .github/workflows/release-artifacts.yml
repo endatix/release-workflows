@@ -64,10 +64,12 @@ on:
         default: false
       runner:
         description: >-
-          Runner for the job: a GitHub-hosted label (default ubuntu-latest) or a self-hosted
-          runner scale set name. Self-hosted runners need no preinstalled toolchain: the job
-          sets up what it uses. The retag needs only the docker CLI; the rebuild fallback
-          needs a Docker daemon.
+          Runner for the job: a GitHub-hosted label (default ubuntu-latest; empty means the
+          default) or a self-hosted runner scale set name. On a runner with no preinstalled
+          toolchain, this workflow sets up only .NET and the JDK (from dotnet-version /
+          java-version). The retag needs only the docker CLI with buildx; the rebuild path runs
+          the consumer's release-*.sh, which must install anything else they call, and image
+          builds need a Docker daemon.
         required: false
         type: string
         default: "ubuntu-latest"
@@ -85,7 +87,9 @@ on:
 jobs:
   promote:
     name: Promote artifacts to stable
-    runs-on: ${{ inputs.runner }}
+    # An empty `runner` (e.g. a caller passing an unset variable) falls back to the default
+    # instead of a job with no runner label.
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     environment:
       name: Production # matches the Infisical OIDC identity binding
     steps:

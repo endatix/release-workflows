@@ -36,9 +36,9 @@ on:
         default: "minor"
       runner:
         description: >-
-          Runner for the job: a GitHub-hosted label (default ubuntu-latest) or a self-hosted
-          runner scale set name. Self-hosted runners need no preinstalled toolchain: the job
-          sets up what it uses. The job uses git and the gh CLI (installed when missing).
+          Runner for the job: a GitHub-hosted label (default ubuntu-latest; empty means the
+          default) or a self-hosted runner scale set name. The job needs git, which runner
+          images ship, and the gh CLI, which it installs on self-hosted runners when missing.
         required: false
         type: string
         default: "ubuntu-latest"
@@ -51,16 +51,20 @@ on:
 jobs:
   draft:
     name: Create draft release
-    runs-on: ${{ inputs.runner }}
+    # An empty `runner` (e.g. a caller passing an unset variable) falls back to the default
+    # instead of a job with no runner label.
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     steps:
       - name: 🔍 Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0 # need all tags + history for notes generation
 
-      # GitHub-hosted images ship gh; a self-hosted runner image may not. A pinned,
-      # checksum-checked release (amd64), and a no-op wherever gh is already installed.
+      # GitHub-hosted images ship gh, so the step does not run there. A self-hosted image may or
+      # may not have it: the `command -v` check keeps an image's own gh rather than shadowing
+      # it. Otherwise a pinned, checksum-checked release (amd64).
       - name: 🧰 gh CLI (if missing)
+        if: runner.environment == 'self-hosted'
         env:
           GH_CLI_VERSION: "2.102.0"
           GH_CLI_SHA256: bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 # linux_amd64.tar.gz

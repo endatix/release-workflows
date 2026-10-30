@@ -38,9 +38,12 @@ on:
         default: ""
       runner:
         description: >-
-          Runner for the job: a GitHub-hosted label (default ubuntu-latest) or a self-hosted
-          runner scale set name. Self-hosted runners need no preinstalled toolchain: the job
-          sets up what it uses. Builds that produce an image need a Docker daemon.
+          Runner for the job: a GitHub-hosted label (default ubuntu-latest; empty means the
+          default) or a self-hosted runner scale set name. On a runner with no preinstalled
+          toolchain, this workflow sets up only .NET and the JDK (from dotnet-version /
+          java-version) and, on main and hotfix/* only, Node for semantic-release. Anything
+          else the consumer's release-*.sh scripts call (Node on PRs, helm, ...) they must
+          install themselves; image builds need a Docker daemon.
         required: false
         type: string
         default: "ubuntu-latest"
@@ -58,7 +61,9 @@ on:
 jobs:
   pipeline:
     name: Build / Canary
-    runs-on: ${{ inputs.runner }}
+    # An empty `runner` (e.g. a caller passing an unset variable) falls back to the default
+    # instead of a job with no runner label.
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     environment:
       name: Production
     steps:

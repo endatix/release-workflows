@@ -192,7 +192,7 @@ config version always matches the workflow version.
 - A `uses:` job runs on its own runner: toolchains must be set up inside the
   called workflow (`dotnet-version` / `java-version` inputs, skipped if empty).
 - **Runner choice is the caller's** (`runner` input on all three workflows,
-  default `ubuntu-latest`). Public repos keep the default; private repos pass a
+  default `ubuntu-latest`; `runs-on` falls back to it when the input is empty). Public repos keep the default; private repos pass a
   self-hosted ARC scale set name (`endatix-docker` for canary/promote, which
   build or push images; `endatix-light` for release-start). A called workflow
   reaches self-hosted runners from the **caller's** context, so only the
@@ -201,7 +201,9 @@ config version always matches the workflow version.
   `DOTNET_INSTALL_DIR=~/.dotnet` on self-hosted runners (setup-dotnet's Linux
   default `/usr/share/dotnet` is not writable by the runner user; left empty on
   GitHub-hosted runners so their behaviour is unchanged), and release-start
-  installs a pinned gh CLI only when `gh` is missing.
+  installs a pinned gh CLI on self-hosted runners when `gh` is missing. Node is
+  set up only for semantic-release (main, hotfix/*); a consumer script that
+  needs Node, helm or anything else on a self-hosted runner installs it itself.
 - `secrets.GITHUB_TOKEN` is implicitly available in called workflows;
   everything else needs `secrets: inherit`.
 - Workflow-file parse failures produce runs that cannot be re-run — push a new
