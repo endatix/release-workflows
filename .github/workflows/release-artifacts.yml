@@ -62,6 +62,15 @@ on:
         required: false
         type: boolean
         default: false
+      runner:
+        description: >-
+          Runner for the job: a GitHub-hosted label (default ubuntu-latest) or a self-hosted
+          runner scale set name. Self-hosted runners need no preinstalled toolchain: the job
+          sets up what it uses. The retag needs only the docker CLI; the rebuild fallback
+          needs a Docker daemon.
+        required: false
+        type: string
+        default: "ubuntu-latest"
       dotnet-version:
         description: "Optional .NET SDK version for the rebuild path"
         required: false
@@ -76,7 +85,7 @@ on:
 jobs:
   promote:
     name: Promote artifacts to stable
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     environment:
       name: Production # matches the Infisical OIDC identity binding
     steps:
@@ -117,6 +126,10 @@ jobs:
       - name: 📦 Setup .NET
         if: inputs.dotnet-version != ''
         uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        env:
+          # setup-dotnet installs into /usr/share/dotnet on Linux, which a self-hosted runner's
+          # non-root user cannot write. Empty on GitHub-hosted runners keeps that default.
+          DOTNET_INSTALL_DIR: ${{ runner.environment == 'self-hosted' && '~/.dotnet' || '' }}
         with:
           dotnet-version: ${{ inputs.dotnet-version }}
 

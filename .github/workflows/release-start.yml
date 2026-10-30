@@ -34,6 +34,14 @@ on:
         required: false
         type: string
         default: "minor"
+      runner:
+        description: >-
+          Runner for the job: a GitHub-hosted label (default ubuntu-latest) or a self-hosted
+          runner scale set name. Self-hosted runners need no preinstalled toolchain: the job
+          sets up what it uses. The job uses git and the gh CLI (installed when missing).
+        required: false
+        type: string
+        default: "ubuntu-latest"
       ref:
         description: "Hotfix mode: branch or SHA to release from (empty = canary mode)"
         required: false
@@ -43,12 +51,28 @@ on:
 jobs:
   draft:
     name: Create draft release
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - name: 🔍 Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0 # need all tags + history for notes generation
+
+      # GitHub-hosted images ship gh; a self-hosted runner image may not. A pinned,
+      # checksum-checked release (amd64), and a no-op wherever gh is already installed.
+      - name: 🧰 gh CLI (if missing)
+        env:
+          GH_CLI_VERSION: "2.102.0"
+          GH_CLI_SHA256: bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386 # linux_amd64.tar.gz
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null; then gh --version | head -1; exit 0; fi
+          [ "$(uname -m)" = x86_64 ] || { echo "::error::no gh CLI and no pinned build for $(uname -m)"; exit 1; }
+          tarball="gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLo "${RUNNER_TEMP}/${tarball}" "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/${tarball}"
+          echo "${GH_CLI_SHA256}  ${RUNNER_TEMP}/${tarball}" | sha256sum -c -
+          tar -xzf "${RUNNER_TEMP}/${tarball}" -C "$RUNNER_TEMP"
+          echo "${RUNNER_TEMP}/gh_${GH_CLI_VERSION}_linux_amd64/bin" >> "$GITHUB_PATH"
 
       - name: 📝 Create draft release with generated notes
         env:

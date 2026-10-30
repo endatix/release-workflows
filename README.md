@@ -123,6 +123,12 @@ jobs:
 Repo-specific checks beyond the build (tests, linting) go in additional local
 jobs alongside `pipeline`.
 
+Every shared workflow takes an optional `runner` input (default
+`ubuntu-latest`). Private repos pass a self-hosted runner scale set name, e.g.
+`runner: endatix-docker` for `canary.yml` / `release-artifacts.yml` (they build
+or push images) and `runner: endatix-light` for `release-start.yml`. Only the
+calling repository needs access to the runner group.
+
 `release-start.yml` — the manual trigger you run to begin a stable release:
 
 ```yaml
