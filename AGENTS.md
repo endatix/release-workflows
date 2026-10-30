@@ -197,11 +197,14 @@ config version always matches the workflow version.
   build or push images; `endatix-light` for release-start). A called workflow
   reaches self-hosted runners from the **caller's** context, so only the
   caller repository needs access to the runner group — this repo does not.
-  Self-hosted images preinstall nothing, so the workflows set up what they use:
+  The self-hosted image (`ghcr.io/actions/actions-runner`) has git, curl, jq,
+  unzip, tar, gpg, sudo, perl, python3 and the docker CLI with buildx, but no
+  SDKs (.NET, Node, Java), gh or az, so the workflows set up what they use:
   `DOTNET_INSTALL_DIR=~/.dotnet` on self-hosted runners (setup-dotnet's Linux
   default `/usr/share/dotnet` is not writable by the runner user; left empty on
   GitHub-hosted runners so their behaviour is unchanged), and release-start
-  installs a pinned gh CLI on self-hosted runners when `gh` is missing. Node is
+  installs a pinned gh CLI (linux amd64 only) on self-hosted runners when
+  `gh` is missing. Node is
   set up only for semantic-release (main, hotfix/*); a consumer script that
   needs Node, helm or anything else on a self-hosted runner installs it itself.
 - `secrets.GITHUB_TOKEN` is implicitly available in called workflows;

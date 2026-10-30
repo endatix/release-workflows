@@ -138,13 +138,15 @@ self-hosted runner scale set name, e.g. `runner: endatix-docker` for
 
 Only the calling repository needs access to the runner group. On such a runner
 the workflows set up .NET / the JDK from their inputs, Node for
-semantic-release on main and hotfix/*, and gh for release-start; anything else
+semantic-release on main and hotfix/*, and gh for release-start (amd64 runners
+only: that is the one build it pins); anything else
 your `release-*.sh` scripts call they must install.
 
 > **After this change merges:** the examples' pins (`8e04473…`) predate the
 > `runner` input. Squash-merging makes a new commit, so once it lands, move
-> `v1` to it and update every example SHA in this file to it; the branch
-> commit that consumers may have pinned for testing becomes unreachable.
+> `v1` to it and, in one follow-up commit, update every example SHA in this
+> file to it and delete this note. The branch commit that consumers may have
+> pinned for testing becomes unreachable.
 
 `release-start.yml` — the manual trigger you run to begin a stable release:
 
