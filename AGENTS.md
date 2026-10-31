@@ -196,7 +196,8 @@ config version always matches the workflow version.
 - A `uses:` job runs on its own runner: toolchains must be set up inside the
   called workflow (`dotnet-version` / `java-version` inputs, skipped if empty).
 - **Runner choice is the caller's** (`runner` input on all three workflows,
-  default `ubuntu-latest`; `runs-on` falls back to it when the input is empty). Public repos keep the default; private repos pass a
+  default `ubuntu-latest`; `runs-on` falls back to it when the input is
+  empty). Public repos keep the default; private repos pass a
   self-hosted ARC scale set name (`endatix-docker` for canary/promote, which
   build or push images; `endatix-light` for release-start). A called workflow
   reaches self-hosted runners from the **caller's** context, so only the
@@ -219,20 +220,24 @@ config version always matches the workflow version.
   - `GITHUB_TOKEN` is available to every step from the first.
   - **OIDC request token.** Every job with `id-token: write` has
     `ACTIONS_ID_TOKEN_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` in every
-    step from the first. Code that runs during an install can mint an OIDC
-    token for the job and, with the Infisical identity id written in these
-    workflows, log in to Infisical `prod` itself. Ordering the installs first
-    does not prevent that; it only keeps already-fetched secrets out of their
-    environment.
+    step from the first. Code in ANY step of such a job, not only an install,
+    can mint an OIDC token for the job and, with the Infisical identity id
+    written in these workflows, log in to Infisical `prod` itself. Ordering
+    the installs first does not prevent that; it only keeps already-fetched
+    secrets out of their environment.
   - **The semantic-release tree** (semantic-release@24 and its plugins, from
     major ranges, no lockfile) runs during the semantic-release step with the
     App token and the Infisical env. Accepted. It is installed with
     `--ignore-scripts`, which removes install-time code execution (no
     install/postinstall hooks; today's tree has none, so nothing changed), but
     not run-time execution.
-  - The consumer's own code: `release-prepare.sh` / `release-publish.sh` (and
-    the dependency restores they do) under semantic-release on main, and on
-    the rebuild path of release-artifacts.
+  - The consumer's own code, which can do that minting too, including where
+    no secret has been fetched yet: in canary.yml the PR build validation
+    (`release-prepare.sh 0.0.0-ci`) and `release-test.sh` (on every event,
+    main included) run in environment Production with `id-token: write`
+    before Infisical; then `release-prepare.sh` / `release-publish.sh` (and
+    the dependency restores they do) under semantic-release on main, with the
+    secrets; and the rebuild path of release-artifacts.
 - **Known constraint: Infisical's export runs after the toolchain setup.**
   The secrets action exports every key under the project path (`recursive:
   true`) into the job environment, now after setup-node / setup-dotnet /
@@ -266,8 +271,16 @@ the scripts as `NUGET_API_KEY` (falls back to an Infisical-provided
 `NUGET_API_KEY` when the input is off). The login step must run after
 Infisical — the nuget.org username arrives as `ENDATIX_NUGET_ORG_USERNAME`
 (profile name, not email). Requires a trusted publishing policy on nuget.org
-scoped to the caller repo + workflow filename (`release-artifacts.yml` — the
-caller stub and this reusable workflow share that filename deliberately).
+scoped to **this repo** (`endatix/release-workflows`) and this workflow file
+(`release-artifacts.yml`), not the caller's: the login runs here, and the OIDC
+token's `job_workflow_ref` names the reusable workflow, not the caller (GitHub
+OIDC reference: "For jobs using a reusable workflow, the ref path to the
+reusable workflow"). A caller-scoped policy is rejected — what left endatix
+v0.7.1 tagged with no packages (see 8e04473). The trust boundary is therefore
+"any consumer of this shared workflow"; a caller that wants per-repo trust sets
+`nuget-login: false` + `upload-nuget-artifacts: true` and pushes from its own
+workflow (the `nuget-login` / `upload-nuget-artifacts` input descriptions say
+the same).
 
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
