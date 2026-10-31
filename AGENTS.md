@@ -211,13 +211,35 @@ config version always matches the workflow version.
   `gh` is missing. Node is set up only for semantic-release (main, hotfix/*);
   a consumer script that needs Node, helm or anything else on a self-hosted
   runner installs it itself.
-- **No tool download runs with prod secrets in the job.** Toolchains (.NET,
-  JDK, Node) and the semantic-release `npm install` run before the Infisical
-  step, the App token, the nuget.org login and the GHCR login, in both
-  canary.yml and release-artifacts.yml. What still runs with secrets is the
-  consumer's own code: `release-prepare.sh` / `release-publish.sh` (and the
-  dependency restores they do) under semantic-release on main, and on the
-  rebuild path of release-artifacts.
+- **No tool download runs with the Infisical secrets, the App token, the
+  nuget.org key or the GHCR login in the job.** Toolchains (.NET, JDK, Node)
+  and the semantic-release `npm install` run before the Infisical step, the App
+  token, the nuget.org login and the GHCR login, in both canary.yml and
+  release-artifacts.yml. The claim is that narrow; the exceptions:
+  - `GITHUB_TOKEN` is available to every step from the first.
+  - **OIDC request token.** Every job with `id-token: write` has
+    `ACTIONS_ID_TOKEN_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` in every
+    step from the first. Code that runs during an install can mint an OIDC
+    token for the job and, with the Infisical identity id written in these
+    workflows, log in to Infisical `prod` itself. Ordering the installs first
+    does not prevent that; it only keeps already-fetched secrets out of their
+    environment.
+  - **The semantic-release tree** (semantic-release@24 and its plugins, from
+    major ranges, no lockfile) runs during the semantic-release step with the
+    App token and the Infisical env. Accepted. It is installed with
+    `--ignore-scripts`, which removes install-time code execution (no
+    install/postinstall hooks; today's tree has none, so nothing changed), but
+    not run-time execution.
+  - The consumer's own code: `release-prepare.sh` / `release-publish.sh` (and
+    the dependency restores they do) under semantic-release on main, and on
+    the rebuild path of release-artifacts.
+- **Known constraint: Infisical's export runs after the toolchain setup.**
+  The secrets action exports every key under the project path (`recursive:
+  true`) into the job environment, now after setup-node / setup-dotnet /
+  setup-java have set theirs. A key named like one of those variables
+  (`JAVA_HOME*`, `DOTNET_ROOT`, `npm_config_*`, `PATH`-adjacent names) would
+  override the toolchain's value for every later step. Keep such names out of
+  the `github-actions-for-endatix` project.
 - `secrets.GITHUB_TOKEN` is implicitly available in called workflows;
   everything else needs `secrets: inherit`.
 - Workflow-file parse failures produce runs that cannot be re-run — push a new

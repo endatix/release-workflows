@@ -193,7 +193,11 @@ jobs:
           # The package.json anchors npm to $CFG (otherwise it walks up to the
           # nearest project root and installs the tooling elsewhere).
           echo '{"private":true}' > "${CFG}/package.json"
-          (cd "$CFG" && npm install --no-save --no-fund --no-audit --loglevel=error \
+          # --ignore-scripts: no package's install/postinstall hook runs here. The tree is
+          # resolved from major ranges with no lockfile, so this removes install-time code
+          # execution, not run-time: the same tree still runs in the semantic-release step,
+          # with the App token and the Infisical prod env (an accepted exception, AGENTS.md).
+          (cd "$CFG" && npm install --ignore-scripts --no-save --no-fund --no-audit --loglevel=error \
             semantic-release@24 @semantic-release/exec@6 conventional-changelog-conventionalcommits@8)
 
       - name: 🔐 Fetch secrets (Infisical, OIDC)
