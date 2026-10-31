@@ -240,8 +240,11 @@ config version always matches the workflow version.
     secrets; and the rebuild path of release-artifacts.
 - **Known constraint: Infisical's export runs after the toolchain setup.**
   The secrets action exports every key under the project path (`recursive:
-  true`) into the job environment, now after setup-node / setup-dotnet /
-  setup-java have set theirs. A key named like one of those variables
+  true`) into the job environment after the toolchains have set theirs. In
+  canary.yml that was already so for .NET and the JDK; this change moved only
+  Node and the semantic-release install before Infisical. In
+  release-artifacts.yml (with `fetch-secrets`) .NET and the JDK are newly
+  before it. A key named like one of those variables
   (`JAVA_HOME*`, `DOTNET_ROOT`, `npm_config_*`, `PATH`-adjacent names) would
   override the toolchain's value for every later step. Keep such names out of
   the `github-actions-for-endatix` project.
@@ -265,27 +268,42 @@ image-retag path are skipped; `DOCKER_IMAGE` is exported empty).
 `release-artifacts.yml` also takes `fetch-secrets: true` to inject Infisical
 prod secrets into the rebuild path (caller grants `id-token: write`; the
 canary workflow injects Infisical secrets unconditionally), and
-`nuget-login: true` for nuget.org **OIDC trusted publishing**: `NuGet/login`
-mints a short-lived API key per run (no long-lived key stored), exported to
-the scripts as `NUGET_API_KEY` (falls back to an Infisical-provided
-`NUGET_API_KEY` when the input is off). The login step must run after
-Infisical — the nuget.org username arrives as `ENDATIX_NUGET_ORG_USERNAME`
-(profile name, not email). Requires a trusted publishing policy on nuget.org
-scoped to **this repo** (`endatix/release-workflows`) and this workflow file
-(`release-artifacts.yml`), not the caller's: the login runs here, and the OIDC
-token's `job_workflow_ref` names the reusable workflow, not the caller (GitHub
-OIDC reference: "For jobs using a reusable workflow, the ref path to the
-reusable workflow"). A caller-scoped policy is rejected — what left endatix
-v0.7.1 tagged with no packages (see 8e04473). The trust boundary is therefore
-"any consumer of this shared workflow"; a caller that wants per-repo trust sets
-`nuget-login: false` + `upload-nuget-artifacts: true` and pushes from its own
-workflow (the `nuget-login` / `upload-nuget-artifacts` input descriptions say
-the same).
+`upload-nuget-artifacts: true`, which hands `build/packages/nuget/*.nupkg` to
+the caller as an artifact.
+
+**nuget.org trusted publishing works only from the caller's own workflow.**
+nuget.org matches a GitHub OIDC token against a policy on two claims: `repository`
+must equal the policy's `{owner}/{repo}`, and `job_workflow_ref` must start with
+that same `{owner}/{repo}/.github/workflows/` (NuGetGallery's
+`GitHubTokenPolicyValidator`). In a job of this reusable workflow, called from
+another repository, `repository` is the caller while `job_workflow_ref` names
+`endatix/release-workflows` (GitHub: "for jobs using a reusable workflow, the
+ref path to the reusable workflow"), so no policy can match either way. A caller-scoped policy fails on
+`job_workflow_ref` (what left endatix v0.7.1 tagged with no packages), and a
+policy scoped to this repo fails on `repository`. The minted key cannot be
+handed back to the caller either (NuGet/login marks it a secret, and GitHub
+redacts secrets from job outputs). So the one working path is
+`upload-nuget-artifacts: true` here plus a job in the caller's own workflow
+that runs `NuGet/login` and pushes: there `repository` and `job_workflow_ref`
+name the same repo, and the policy is scoped to that repo and workflow file.
+endatix (`release-artifacts.yml`) and endatix-saas
+(`release-management-nuget.yml`, its own packing, not this workflow) do this.
+
+The `nuget-login` input (NuGet/login inside this workflow, key exported as
+`NUGET_API_KEY`) cannot succeed for any caller in another repository, which is
+every caller. It is kept in this change, marked unusable, because removing an
+input is a breaking contract change (a caller still passing it would fail to
+start) and belongs in its own `v2`-or-cleanup change, not in the runner
+work.
 
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
 docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
 rebuild`), and **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
 GitHub Packages only, stables → GitHub Packages + nuget.org via trusted
-publishing; `promotion: rebuild` + `fetch-secrets: true` + `nuget-login: true`;
-canary gated on unit + integration tests via `needs:` in its caller).
+publishing; `promotion: rebuild` + `fetch-secrets: true` + `nuget-login: false`
++ `upload-nuget-artifacts: true`, with the nuget.org login and push in its own
+caller job; canary gated on unit + integration tests via `needs:` in its
+caller), and **endatix-saas** (private; the first `runner` consumer:
+`endatix-docker` for canary/promote, `endatix-light` for release-start;
+docker-only, `promotion: image-retag`).

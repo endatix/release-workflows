@@ -148,8 +148,12 @@ your `release-*.sh` scripts call they must install.
 > file to it and delete this note. The branch commit stays fetchable after the
 > branch is deleted (the pull request's `refs/pull/<n>/head` keeps it), so a pin
 > left on it keeps working silently instead of failing; re-pin anyway, since
-> nothing reviewed points there. Check consumers with
-> `grep -rn <branch-sha> .github/workflows`.
+> nothing reviewed points there. In each consumer that passes `runner`, after
+> `git -C <release-workflows> fetch origin`, list every pin with
+> `grep -rn 'release-workflows/.*@' .github/workflows`; each SHA must be on
+> `main` (`git -C <release-workflows> merge-base --is-ancestor <sha> origin/main`)
+> and define the input
+> (`git -C <release-workflows> show <sha>:.github/workflows/canary.yml | grep -q '^      runner:'`).
 
 `release-start.yml` — the manual trigger you run to begin a stable release:
 
@@ -234,25 +238,26 @@ Notes:
   via OIDC trusted publishing, so no long-lived key is stored. One-time setup:
   the nuget.org username in Infisical as `ENDATIX_NUGET_ORG_USERNAME` — this must
   be the **individual profile name of the policy creator**, not an organization —
-  plus a trusted publishing policy on nuget.org. Two ways to wire it, and the
-  choice determines what that policy must be scoped to:
+  plus a trusted publishing policy on nuget.org scoped to **your repo** and the
+  workflow file that runs the login. Only one wiring works:
 
-  | | `nuget-login: true` | `upload-nuget-artifacts: true` |
+  | | `upload-nuget-artifacts: true` (works) | `nuget-login: true` (does not work) |
   |---|---|---|
-  | Where the login runs | this shared workflow | **your** repo |
-  | Policy must be scoped to | `endatix/release-workflows` | **your repo** |
-  | Trust boundary | every consumer of this workflow | just your repo |
-  | Push happens in | your `release-publish.sh` | a job in your caller |
+  | Where the login runs | a job in **your** workflow | this shared workflow |
+  | Policy scoped to | your repo + your workflow file | no policy can match |
+  | Push happens in | that job in your caller | your `release-publish.sh` |
 
-  OIDC's `job_workflow_ref` claim names the workflow where the job is *defined*,
-  so a `NuGet/login` here always presents `endatix/release-workflows` — a policy
-  scoped to your repo is rejected with a claim mismatch. The minted key cannot be
-  handed back to your caller either (`NuGet/login` marks it a secret, and GitHub
-  redacts secrets from job outputs), so per-repo trust requires moving the *push*
-  into your workflow. See [endatix/endatix](https://github.com/endatix/endatix)
-  `.github/workflows/release-artifacts.yml` for a working example of the second
-  form, and [endatix/endatix-relay](https://github.com/endatix/endatix-relay) for
-  a repo that logs in from its own workflow directly.
+  nuget.org requires the token's `repository` claim to equal the policy's repo
+  and its `job_workflow_ref` to be a workflow of that same repo. In this shared
+  workflow, `repository` is your repo but `job_workflow_ref` names
+  `endatix/release-workflows`, so a login here is rejected whatever the policy
+  says. The minted key cannot be handed back to your caller either
+  (`NuGet/login` marks it a secret, and GitHub redacts secrets from job
+  outputs), so the push moves into your workflow. `nuget-login` stays only for
+  input compatibility. See [endatix/endatix](https://github.com/endatix/endatix)
+  `.github/workflows/release-artifacts.yml` for a working example, and
+  [endatix/endatix-relay](https://github.com/endatix/endatix-relay) for a repo
+  that logs in from its own workflow directly.
 - To gate the canary on tests, put your test jobs in `ci.yml` and give the
   `pipeline` job `needs: [your-test-jobs]`.
 
