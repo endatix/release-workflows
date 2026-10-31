@@ -272,15 +272,19 @@ canary workflow injects Infisical secrets unconditionally), and
 the caller as an artifact.
 
 **nuget.org trusted publishing works only from the caller's own workflow.**
-nuget.org matches a GitHub OIDC token against a policy on two claims: `repository`
-must equal the policy's `{owner}/{repo}`, and `job_workflow_ref` must start with
-that same `{owner}/{repo}/.github/workflows/` (NuGetGallery's
-`GitHubTokenPolicyValidator`). In a job of this reusable workflow, called from
-another repository, `repository` is the caller while `job_workflow_ref` names
-`endatix/release-workflows` (GitHub: "for jobs using a reusable workflow, the
-ref path to the reusable workflow"), so no policy can match either way. A caller-scoped policy fails on
-`job_workflow_ref` (what left endatix v0.7.1 tagged with no packages), and a
-policy scoped to this repo fails on `repository`. The minted key cannot be
+nuget.org (NuGetGallery's `GitHubTokenPolicyValidator`) checks a GitHub OIDC
+token against a policy on several claims: `repository_owner`, the owner and
+repository IDs once the policy is permanently enabled, the exact workflow file
+name, an optional environment, and a list of banned events. The conclusion
+rests on two of them: `repository` must equal the policy's `{owner}/{repo}`,
+and `job_workflow_ref` must start with that same
+`{owner}/{repo}/.github/workflows/`. In a job of this reusable workflow, called
+from another repository, `repository` is the caller while `job_workflow_ref`
+names `endatix/release-workflows` (GitHub: "for jobs using a reusable
+workflow, the ref path to the reusable workflow"), so no policy can match
+either way. A caller-scoped policy fails on `job_workflow_ref` (what left
+endatix v0.7.1 tagged with no packages), and a policy scoped to this repo
+fails on `repository`. The minted key cannot be
 handed back to the caller either (NuGet/login marks it a secret, and GitHub
 redacts secrets from job outputs). So the one working path is
 `upload-nuget-artifacts: true` here plus a job in the caller's own workflow
@@ -299,11 +303,16 @@ work.
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
 docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
-rebuild`), and **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
+rebuild`), **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
 GitHub Packages only, stables → GitHub Packages + nuget.org via trusted
-publishing; `promotion: rebuild` + `fetch-secrets: true` + `nuget-login: false`
-+ `upload-nuget-artifacts: true`, with the nuget.org login and push in its own
-caller job; canary gated on unit + integration tests via `needs:` in its
-caller), and **endatix-saas** (private; the first `runner` consumer:
+publishing; `promotion: rebuild` with `fetch-secrets: true`, `nuget-login:
+false` and `upload-nuget-artifacts: true`, the nuget.org login and push in its
+own caller job; canary gated on unit + integration tests via `needs:` in its
+caller), **endatix-hub** (public; all three workflows, pinned at `12aed2d`;
+image + chart, `docker-image: ghcr.io/endatix/endatix-hub`, no SDK inputs;
+release-artifacts with `promotion: rebuild`, `fetch-secrets: true` for the
+Docker Hub credentials and `id-token: write`; when it re-pins, its canary is
+affected by the Node move before Infisical and its rebuild by the export
+order), and **endatix-saas** (private; the first `runner` consumer:
 `endatix-docker` for canary/promote, `endatix-light` for release-start;
 docker-only, `promotion: image-retag`).

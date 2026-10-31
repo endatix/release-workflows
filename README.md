@@ -150,10 +150,11 @@ your `release-*.sh` scripts call they must install.
 > left on it keeps working silently instead of failing; re-pin anyway, since
 > nothing reviewed points there. In each consumer that passes `runner`, after
 > `git -C <release-workflows> fetch origin`, list every pin with
-> `grep -rn 'release-workflows/.*@' .github/workflows`; each SHA must be on
-> `main` (`git -C <release-workflows> merge-base --is-ancestor <sha> origin/main`)
-> and define the input
-> (`git -C <release-workflows> show <sha>:.github/workflows/canary.yml | grep -q '^      runner:'`).
+> `grep -rn 'release-workflows/.*@' .github/workflows`; no line may still say
+> `re-pin`, and for each pin `<file>@<sha>` the SHA must be on `main`
+> (`git -C <release-workflows> merge-base --is-ancestor <sha> origin/main`) and
+> that same workflow must define the input
+> (`git -C <release-workflows> show <sha>:.github/workflows/<file> | grep -q '^      runner:'`).
 
 `release-start.yml` — the manual trigger you run to begin a stable release:
 
