@@ -156,8 +156,9 @@ jobs:
           GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
           HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
-          # Temp key from NuGet trusted publishing when nuget-login is on;
-          # falls back to an Infisical-provided NUGET_API_KEY otherwise.
+          # nuget-login's temp key: never set for a caller in another repository, since that
+          # login cannot succeed there (see the input). In practice this is the
+          # Infisical-provided NUGET_API_KEY, if the project has one, or empty.
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY || env.NUGET_API_KEY }}
         run: |
           case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac

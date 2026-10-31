@@ -230,7 +230,7 @@ multi-artifact example).
 
 Notes:
 - `docker-image` is optional everywhere — omit it if your repo publishes no
-  image (see [endatix/endatix](https://github.com/endatix/endatix), NuGet-only).
+  image (GHCR login and the image-retag path are then skipped).
 - If your stable publish needs secrets beyond the job token, store them in
   Infisical (prod) and add `fetch-secrets: true` + `id-token: write` to your
   release-artifacts caller. The canary workflow injects Infisical secrets

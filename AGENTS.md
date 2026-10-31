@@ -303,16 +303,20 @@ work.
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
 docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
-rebuild`), **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
-GitHub Packages only, stables → GitHub Packages + nuget.org via trusted
-publishing; `promotion: rebuild` with `fetch-secrets: true`, `nuget-login:
-false` and `upload-nuget-artifacts: true`, the nuget.org login and push in its
-own caller job; canary gated on unit + integration tests via `needs:` in its
-caller), **endatix-hub** (public; all three workflows, pinned at `12aed2d`;
-image + chart, `docker-image: ghcr.io/endatix/endatix-hub`, no SDK inputs;
+rebuild`), **endatix** (public OSS; ~8 NuGet packages plus the image
+`ghcr.io/endatix/endatix-api`, which its `release-publish.sh` also mirrors to
+`docker.io/endatix/endatix-api` on promotion; canary NuGet packages → GitHub
+Packages only, stables → GitHub Packages + nuget.org via trusted publishing;
+`dotnet-version: 10.x`; `promotion: rebuild` with `fetch-secrets: true`,
+`nuget-login: false` and `upload-nuget-artifacts: true`, the nuget.org login
+and push in its own caller job; canary gated on unit + integration tests via
+`needs:` in its caller; when it re-pins, both its canary (Node) and its
+rebuild (.NET now before Infisical) are affected by the reorder),
+**endatix-hub** (public; all three workflows, pinned at `12aed2d`; image +
+chart, `docker-image: ghcr.io/endatix/endatix-hub`, no SDK inputs;
 release-artifacts with `promotion: rebuild`, `fetch-secrets: true` for the
-Docker Hub credentials and `id-token: write`; when it re-pins, its canary is
-affected by the Node move before Infisical and its rebuild by the export
-order), and **endatix-saas** (private; the first `runner` consumer:
+Docker Hub credentials and `id-token: write`; when it re-pins, only its canary
+is affected, by the Node move before Infisical: it sets up no toolchain in
+release-artifacts, so nothing moved there), and **endatix-saas** (private; the first `runner` consumer:
 `endatix-docker` for canary/promote, `endatix-light` for release-start;
 docker-only, `promotion: image-retag`).
