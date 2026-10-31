@@ -38,7 +38,8 @@ on:
         description: >-
           Runner for the job: a GitHub-hosted label (default ubuntu-latest; empty means the
           default) or a self-hosted runner scale set name. The job needs git, which runner
-          images ship, and the gh CLI, which it installs on self-hosted runners when missing.
+          images ship, and the gh CLI, which it installs on self-hosted runners when missing
+          (linux amd64 only: on another architecture the runner image must ship gh).
         required: false
         type: string
         default: "ubuntu-latest"

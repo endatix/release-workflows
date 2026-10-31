@@ -71,8 +71,12 @@ config version always matches the workflow version.
 - **A consumer repo must NOT have its own `.releaserc.*`** — cosmiconfig finds
   it in CWD and it silently overrides `--extends`.
 - `DRY_RUN=true` makes the semantic-release invocation a dry run — used for
-  local testing: extract the step's `run` script, then
-  `RUNNER_TEMP=<tmp> DRY_RUN=true GITHUB_TOKEN=$(gh auth token) DOCKER_IMAGE=… RELEASE_CHANNEL=canary bash <script>`.
+  local testing: extract the `run` scripts of the "Install semantic-release"
+  and "semantic-release" steps (the first writes the config and installs the
+  tooling into `$RUNNER_TEMP/release-config`, the second runs it), then run
+  both with the same `RUNNER_TEMP`:
+  `RUNNER_TEMP=<tmp> bash <install>` and
+  `RUNNER_TEMP=<tmp> DRY_RUN=true GITHUB_TOKEN=$(gh auth token) DOCKER_IMAGE=… RELEASE_CHANNEL=canary bash <invoke>`.
 
 ## One build per event
 
@@ -204,9 +208,16 @@ config version always matches the workflow version.
   default `/usr/share/dotnet` is not writable by the runner user; left empty on
   GitHub-hosted runners so their behaviour is unchanged), and release-start
   installs a pinned gh CLI (linux amd64 only) on self-hosted runners when
-  `gh` is missing. Node is
-  set up only for semantic-release (main, hotfix/*); a consumer script that
-  needs Node, helm or anything else on a self-hosted runner installs it itself.
+  `gh` is missing. Node is set up only for semantic-release (main, hotfix/*);
+  a consumer script that needs Node, helm or anything else on a self-hosted
+  runner installs it itself.
+- **No tool download runs with prod secrets in the job.** Toolchains (.NET,
+  JDK, Node) and the semantic-release `npm install` run before the Infisical
+  step, the App token, the nuget.org login and the GHCR login, in both
+  canary.yml and release-artifacts.yml. What still runs with secrets is the
+  consumer's own code: `release-prepare.sh` / `release-publish.sh` (and the
+  dependency restores they do) under semantic-release on main, and on the
+  rebuild path of release-artifacts.
 - `secrets.GITHUB_TOKEN` is implicitly available in called workflows;
   everything else needs `secrets: inherit`.
 - Workflow-file parse failures produce runs that cannot be re-run — push a new

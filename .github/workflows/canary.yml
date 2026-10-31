@@ -121,55 +121,17 @@ jobs:
           fi
 
       # ----- Release (main → canary; hotfix/* → hotfix prerelease) -----
-      - name: 🔐 Fetch secrets (Infisical, OIDC)
-        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
-        uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
-        with:
-          method: "oidc"
-          env-slug: "prod"
-          project-slug: "github-actions-for-endatix"
-          identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
-          recursive: true
-
-      - name: 🔑 Endatix Automations APP token (GitHub App)
-        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
-        id: app-token
-        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
-        with:
-          # App id + private key are injected by the Infisical step above.
-          app-id: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_APP_ID }}
-          private-key: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }} # scope the token to the CALLER repo only
-
+      # Node and the semantic-release toolchain are downloaded BEFORE Infisical, so no tool or
+      # dependency download runs with prod secrets in the job environment. Neither needs a
+      # secret: the config below is static and npm installs from the public registry.
       - name: 📦 Setup Node (semantic-release)
         if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: "lts/*"
 
-      - name: 🐳 GHCR login
-        if: (github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')) && inputs.docker-image != ''
-        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }} # packages:write is the only write scope on this token
-
-      - name: 🐤 semantic-release (canary / hotfix channel)
+      - name: 📦 Install semantic-release
         if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
-        env:
-          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }} # App token, not the read-only job token
-          DOCKER_IMAGE: ${{ inputs.docker-image }}
-          # Neither channel moves floating tags (docker latest, npm latest);
-          # npm dist-tag = the channel name (canary / hotfix).
-          RELEASE_CHANNEL: ${{ github.ref_name == 'main' && 'canary' || 'hotfix' }}
-          # Standard environment for consumer release scripts — org-derived, exported
-          # for every repo; repos that publish only a docker image simply ignore them.
-          GH_PACKAGES_USER: ${{ github.actor }}
-          GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }} # packages:write — NuGet/npm push + helm registry login
-          NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
-          HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
         run: |
           CFG="${RUNNER_TEMP}/release-config"
           mkdir -p "$CFG"
@@ -234,6 +196,51 @@ jobs:
           (cd "$CFG" && npm install --no-save --no-fund --no-audit --loglevel=error \
             semantic-release@24 @semantic-release/exec@6 conventional-changelog-conventionalcommits@8)
 
+      - name: 🔐 Fetch secrets (Infisical, OIDC)
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
+        uses: Infisical/secrets-action@03d3fa38607956c493f53c6633f94006a13c47ae # v1.0.7
+        with:
+          method: "oidc"
+          env-slug: "prod"
+          project-slug: "github-actions-for-endatix"
+          identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
+          recursive: true
+
+      - name: 🔑 Endatix Automations APP token (GitHub App)
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
+        id: app-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          # App id + private key are injected by the Infisical step above.
+          app-id: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_APP_ID }}
+          private-key: ${{ env.ENDATIX_PROJECT_AUTOMATIONS_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }} # scope the token to the CALLER repo only
+
+      - name: 🐳 GHCR login
+        if: (github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')) && inputs.docker-image != ''
+        uses: docker/login-action@c99871dec2022cc055c062a10cc1a1310835ceb4 # v4.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # packages:write is the only write scope on this token
+
+      - name: 🐤 semantic-release (canary / hotfix channel)
+        if: github.ref_name == 'main' || startsWith(github.ref_name, 'hotfix/')
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }} # App token, not the read-only job token
+          DOCKER_IMAGE: ${{ inputs.docker-image }}
+          # Neither channel moves floating tags (docker latest, npm latest);
+          # npm dist-tag = the channel name (canary / hotfix).
+          RELEASE_CHANNEL: ${{ github.ref_name == 'main' && 'canary' || 'hotfix' }}
+          # Standard environment for consumer release scripts — org-derived, exported
+          # for every repo; repos that publish only a docker image simply ignore them.
+          GH_PACKAGES_USER: ${{ github.actor }}
+          GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }} # packages:write — NuGet/npm push + helm registry login
+          NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+          HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
+        run: |
+          CFG="${RUNNER_TEMP}/release-config" # written by the install step above
           # DRY_RUN is never set in CI — it enables local testing of this script.
           "${CFG}/node_modules/.bin/semantic-release" \
             --extends "${CFG}/release.config.cjs" ${DRY_RUN:+--dry-run}
