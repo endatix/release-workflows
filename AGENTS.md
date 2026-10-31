@@ -303,9 +303,12 @@ work.
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
 docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
-rebuild`), **endatix** (public OSS; ~8 NuGet packages plus the image
+rebuild`), **endatix** (public OSS; ~8 NuGet packages, the image
 `ghcr.io/endatix/endatix-api`, which its `release-publish.sh` also mirrors to
-`docker.io/endatix/endatix-api` on promotion; canary NuGet packages → GitHub
+`docker.io/endatix/endatix-api` on promotion, and the `endatix-api` Helm chart,
+linted and packaged by `release-prepare.sh` and pushed to `HELM_OCI_REPO` by
+`release-publish.sh` with `helm registry login` + `helm push` (so on a
+self-hosted runner it must install helm itself); canary NuGet packages → GitHub
 Packages only, stables → GitHub Packages + nuget.org via trusted publishing;
 `dotnet-version: 10.x`; `promotion: rebuild` with `fetch-secrets: true`,
 `nuget-login: false` and `upload-nuget-artifacts: true`, the nuget.org login
