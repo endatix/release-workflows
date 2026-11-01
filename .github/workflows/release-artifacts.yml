@@ -36,32 +36,40 @@ on:
         default: false
       nuget-login:
         description: >-
-          Mint a short-lived nuget.org API key via OIDC trusted publishing (NuGet/login) and
-          export it as NUGET_API_KEY to the release scripts. Requires fetch-secrets: true (the
-          nuget.org username comes from Infisical as ENDATIX_NUGET_ORG_USERNAME, which must be
-          an INDIVIDUAL's nuget.org profile name — the policy creator — not an organization).
-          CAUTION: the trusted publishing policy must be scoped to THIS repo
-          (endatix/release-workflows) and THIS filename, not the caller's. OIDC's
-          job_workflow_ref claim names the workflow where the job is defined, so a policy
-          scoped to the caller repo will be rejected. That makes the trust boundary "any
-          consumer of this shared workflow". Callers wanting per-repo trust should instead set
-          nuget-login: false + upload-nuget-artifacts: true and push from their own workflow.
+          NOT USABLE FROM ANOTHER REPOSITORY, which is every caller; kept only because removing
+          an input breaks callers that still pass it (AGENTS.md). It runs NuGet/login here, but
+          nuget.org requires the token's `repository` claim to equal the policy's repo AND its
+          job_workflow_ref to be a workflow of that same repo; in this reusable workflow
+          `repository` is the caller and job_workflow_ref is endatix/release-workflows, so no
+          policy matches. Use upload-nuget-artifacts: true and log in and push from a job in
+          your own workflow.
         required: false
         type: boolean
         default: false
       upload-nuget-artifacts:
         description: >-
           Upload build/packages/nuget/*.nupkg as a workflow artifact so the CALLER can push
-          them to nuget.org from its own workflow. Needed when the caller authenticates to
-          nuget.org with OIDC trusted publishing: the OIDC job_workflow_ref claim names the
-          workflow where the job is DEFINED, so a NuGet/login here presents
-          endatix/release-workflows, never the caller's repo. The minted key cannot be handed
-          back either — NuGet/login marks it a secret and GitHub redacts secrets from job
-          outputs — so the push has to move to the key, not the other way round.
-          Use with nuget-login: false. Only meaningful on the rebuild path.
+          them to nuget.org from its own workflow: the only way to use nuget.org trusted
+          publishing with this workflow. A NuGet/login in the caller's own job presents a token
+          whose `repository` and job_workflow_ref both name the caller, so a policy scoped to
+          the caller repo and that workflow file matches; a login here never can. The minted
+          key cannot be handed back from here either (NuGet/login marks it a secret and GitHub
+          redacts secrets from job outputs). Use with nuget-login: false. Only meaningful on
+          the rebuild path.
         required: false
         type: boolean
         default: false
+      runner:
+        description: >-
+          Runner for the job: a GitHub-hosted label (default ubuntu-latest; empty means the
+          default) or a self-hosted runner scale set name. On a runner with no preinstalled
+          toolchain, this workflow sets up only .NET and the JDK (from dotnet-version /
+          java-version). The retag needs only the docker CLI with buildx; the rebuild path runs
+          the consumer's release-*.sh, which must install anything else they call, and image
+          builds need a Docker daemon.
+        required: false
+        type: string
+        default: "ubuntu-latest"
       dotnet-version:
         description: "Optional .NET SDK version for the rebuild path"
         required: false
@@ -76,7 +84,9 @@ on:
 jobs:
   promote:
     name: Promote artifacts to stable
-    runs-on: ubuntu-latest
+    # An empty `runner` (e.g. a caller passing an unset variable) falls back to the default
+    # instead of a job with no runner label.
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     environment:
       name: Production # matches the Infisical OIDC identity binding
     steps:
@@ -85,6 +95,26 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
           fetch-depth: 0 # need all tags to find the canary pointing at this commit
+
+      # Toolchains BEFORE any credential: Infisical secrets, the nuget.org key and the GHCR login
+      # all come after, so no tool download runs with them in the job.
+      - name: 📦 Setup .NET
+        if: inputs.dotnet-version != ''
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        env:
+          # setup-dotnet installs into /usr/share/dotnet on Linux, which a self-hosted runner's
+          # non-root user cannot write. Empty on GitHub-hosted runners keeps that default.
+          DOTNET_INSTALL_DIR: ${{ runner.environment == 'self-hosted' && '~/.dotnet' || '' }}
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+
+      - name: ☕ Setup JDK
+        if: inputs.java-version != ''
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version }}
+          cache: gradle
 
       - name: 🔐 Fetch secrets (Infisical, OIDC)
         if: inputs.fetch-secrets
@@ -96,7 +126,8 @@ jobs:
           identity-id: "403af1ed-7046-480f-a100-c4482b8a89ac"
           recursive: true
 
-      # Short-lived nuget.org API key via OIDC trusted publishing — replaces a
+      # Not usable from another repository (see the nuget-login input): kept for the input's
+      # contract only. Short-lived nuget.org API key via OIDC trusted publishing — replaces a
       # long-lived NUGET_API_KEY secret. Must run AFTER the Infisical step: the
       # nuget.org username (profile name, not email) is injected by Infisical.
       - name: 🔑 NuGet login (OIDC → temp API key)
@@ -114,20 +145,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 📦 Setup .NET
-        if: inputs.dotnet-version != ''
-        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
-        with:
-          dotnet-version: ${{ inputs.dotnet-version }}
-
-      - name: ☕ Setup JDK
-        if: inputs.java-version != ''
-        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
-        with:
-          distribution: temurin
-          java-version: ${{ inputs.java-version }}
-          cache: gradle
-
       - name: 🚀 Promote canary artifacts (or rebuild) as ${{ github.event.release.tag_name }}
         env:
           TAG: ${{ github.event.release.tag_name }}
@@ -139,8 +156,9 @@ jobs:
           GH_PACKAGES_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NUGET_SOURCE: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
           HELM_OCI_REPO: oci://ghcr.io/${{ github.repository_owner }}/charts
-          # Temp key from NuGet trusted publishing when nuget-login is on;
-          # falls back to an Infisical-provided NUGET_API_KEY otherwise.
+          # nuget-login's temp key: never set for a caller in another repository, since that
+          # login cannot succeed there (see the input). In practice this is the
+          # Infisical-provided NUGET_API_KEY, if the project has one, or empty.
           NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY || env.NUGET_API_KEY }}
         run: |
           case "$TAG" in v[0-9]*) ;; *) echo "::error::Unexpected tag format: ${TAG}"; exit 1 ;; esac

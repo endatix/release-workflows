@@ -71,8 +71,12 @@ config version always matches the workflow version.
 - **A consumer repo must NOT have its own `.releaserc.*`** — cosmiconfig finds
   it in CWD and it silently overrides `--extends`.
 - `DRY_RUN=true` makes the semantic-release invocation a dry run — used for
-  local testing: extract the step's `run` script, then
-  `RUNNER_TEMP=<tmp> DRY_RUN=true GITHUB_TOKEN=$(gh auth token) DOCKER_IMAGE=… RELEASE_CHANNEL=canary bash <script>`.
+  local testing: extract the `run` scripts of the "Install semantic-release"
+  and "semantic-release" steps (the first writes the config and installs the
+  tooling into `$RUNNER_TEMP/release-config`, the second runs it), then run
+  both with the same `RUNNER_TEMP`:
+  `RUNNER_TEMP=<tmp> bash <install>` and
+  `RUNNER_TEMP=<tmp> DRY_RUN=true GITHUB_TOKEN=$(gh auth token) DOCKER_IMAGE=… RELEASE_CHANNEL=canary bash <invoke>`.
 
 ## One build per event
 
@@ -191,6 +195,57 @@ config version always matches the workflow version.
   travel as `inputs`; org-constant values are derived from the `github` context.
 - A `uses:` job runs on its own runner: toolchains must be set up inside the
   called workflow (`dotnet-version` / `java-version` inputs, skipped if empty).
+- **Runner choice is the caller's** (`runner` input on all three workflows,
+  default `ubuntu-latest`; `runs-on` falls back to it when the input is
+  empty). Public repos keep the default; private repos pass a
+  self-hosted ARC scale set name (`endatix-docker` for canary/promote, which
+  build or push images; `endatix-light` for release-start). A called workflow
+  reaches self-hosted runners from the **caller's** context, so only the
+  caller repository needs access to the runner group — this repo does not.
+  The self-hosted image (`ghcr.io/actions/actions-runner`) has git, curl, jq,
+  unzip, tar, gpg, sudo, perl, python3 and the docker CLI with buildx, but no
+  SDKs (.NET, Node, Java), gh or az, so the workflows set up what they use:
+  `DOTNET_INSTALL_DIR=~/.dotnet` on self-hosted runners (setup-dotnet's Linux
+  default `/usr/share/dotnet` is not writable by the runner user; left empty on
+  GitHub-hosted runners so their behaviour is unchanged), and release-start
+  installs a pinned gh CLI (linux amd64 only) on self-hosted runners when
+  `gh` is missing. Node is set up only for semantic-release (main, hotfix/*);
+  a consumer script that needs Node, helm or anything else on a self-hosted
+  runner installs it itself.
+- **No tool download runs with the Infisical secrets, the App token, the
+  nuget.org key or the GHCR login in the job.** Toolchains (.NET, JDK, Node)
+  and the semantic-release `npm install` run before the Infisical step, the App
+  token, the nuget.org login and the GHCR login, in both canary.yml and
+  release-artifacts.yml. The claim is that narrow; the exceptions:
+  - `GITHUB_TOKEN` is available to every step from the first.
+  - **OIDC request token.** Every job with `id-token: write` has
+    `ACTIONS_ID_TOKEN_REQUEST_URL` / `ACTIONS_ID_TOKEN_REQUEST_TOKEN` in every
+    step from the first. Code in ANY step of such a job, not only an install,
+    can mint an OIDC token for the job and, with the Infisical identity id
+    written in these workflows, log in to Infisical `prod` itself. Ordering
+    the installs first does not prevent that; it only keeps already-fetched
+    secrets out of their environment.
+  - **The semantic-release tree** (semantic-release@24 and its plugins, from
+    major ranges, no lockfile) runs during the semantic-release step with the
+    App token and the Infisical env. Accepted. It is installed with
+    `--ignore-scripts`, which removes install-time code execution (no
+    install/postinstall hooks), but not run-time execution.
+  - The consumer's own code, which can do that minting too, including where
+    no secret has been fetched yet: in canary.yml the PR build validation
+    (`release-prepare.sh 0.0.0-ci`) and `release-test.sh` (on every event,
+    main included) run in environment Production with `id-token: write`
+    before Infisical; then `release-prepare.sh` / `release-publish.sh` (and
+    the dependency restores they do) under semantic-release on main, with the
+    secrets; and the rebuild path of release-artifacts.
+- **Known constraint: Infisical's export runs after the toolchain setup.**
+  The secrets action exports every key under the project path (`recursive:
+  true`) into the job environment after the toolchains have set theirs: in
+  canary.yml after .NET, the JDK and Node (and the semantic-release install),
+  in release-artifacts.yml (with `fetch-secrets`) after .NET and the JDK. A
+  key named like one of those variables
+  (`JAVA_HOME*`, `DOTNET_ROOT`, `npm_config_*`, `PATH`-adjacent names) would
+  override the toolchain's value for every later step. Keep such names out of
+  the `github-actions-for-endatix` project.
 - `secrets.GITHUB_TOKEN` is implicitly available in called workflows;
   everything else needs `secrets: inherit`.
 - Workflow-file parse failures produce runs that cannot be re-run — push a new
@@ -211,19 +266,53 @@ image-retag path are skipped; `DOCKER_IMAGE` is exported empty).
 `release-artifacts.yml` also takes `fetch-secrets: true` to inject Infisical
 prod secrets into the rebuild path (caller grants `id-token: write`; the
 canary workflow injects Infisical secrets unconditionally), and
-`nuget-login: true` for nuget.org **OIDC trusted publishing**: `NuGet/login`
-mints a short-lived API key per run (no long-lived key stored), exported to
-the scripts as `NUGET_API_KEY` (falls back to an Infisical-provided
-`NUGET_API_KEY` when the input is off). The login step must run after
-Infisical — the nuget.org username arrives as `ENDATIX_NUGET_ORG_USERNAME`
-(profile name, not email). Requires a trusted publishing policy on nuget.org
-scoped to the caller repo + workflow filename (`release-artifacts.yml` — the
-caller stub and this reusable workflow share that filename deliberately).
+`upload-nuget-artifacts: true`, which hands `build/packages/nuget/*.nupkg` to
+the caller as an artifact.
+
+**nuget.org trusted publishing works only from the caller's own workflow.**
+nuget.org (NuGetGallery's `GitHubTokenPolicyValidator`) checks a GitHub OIDC
+token against a policy on several claims: `repository_owner`, the owner and
+repository IDs once the policy is permanently enabled, the exact workflow file
+name, an optional environment, and a list of banned events. The conclusion
+rests on two of them: `repository` must equal the policy's `{owner}/{repo}`,
+and `job_workflow_ref` must start with that same
+`{owner}/{repo}/.github/workflows/`. In a job of this reusable workflow, called
+from another repository, `repository` is the caller while `job_workflow_ref`
+names `endatix/release-workflows` (GitHub: "for jobs using a reusable
+workflow, the ref path to the reusable workflow"), so no policy can match
+either way. A caller-scoped policy fails on `job_workflow_ref` (what left
+endatix v0.7.1 tagged with no packages), and a policy scoped to this repo
+fails on `repository`. The minted key cannot be
+handed back to the caller either (NuGet/login marks it a secret, and GitHub
+redacts secrets from job outputs). So the one working path is
+`upload-nuget-artifacts: true` here plus a job in the caller's own workflow
+that runs `NuGet/login` and pushes: there `repository` and `job_workflow_ref`
+name the same repo, and the policy is scoped to that repo and workflow file.
+endatix (`release-artifacts.yml`) and endatix-saas
+(`release-management-nuget.yml`, its own packing, not this workflow) do this.
+
+The `nuget-login` input (NuGet/login inside this workflow, key exported as
+`NUGET_API_KEY`) cannot succeed for any caller in another repository, which is
+every caller. It is kept, marked unusable, because removing an input is a
+breaking contract change (a caller still passing it would fail to start), which
+belongs in a `v2`.
 
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
 docker + helm; `java-version: 21` + `dotnet-version: 8.x`; `promotion:
-rebuild`), and **endatix** (public OSS; ~8 NuGet packages, no image; canaries →
-GitHub Packages only, stables → GitHub Packages + nuget.org via trusted
-publishing; `promotion: rebuild` + `fetch-secrets: true` + `nuget-login: true`;
-canary gated on unit + integration tests via `needs:` in its caller).
+rebuild`), **endatix** (public OSS; ~8 NuGet packages, the image
+`ghcr.io/endatix/endatix-api`, which its `release-publish.sh` also mirrors to
+`docker.io/endatix/endatix-api` on promotion, and the `endatix-api` Helm chart,
+linted and packaged by `release-prepare.sh` and pushed to `HELM_OCI_REPO` by
+`release-publish.sh` with `helm registry login` + `helm push` (so on a
+self-hosted runner it must install helm itself); canary NuGet packages → GitHub
+Packages only, stables → GitHub Packages + nuget.org via trusted publishing;
+`dotnet-version: 10.x`; `promotion: rebuild` with `fetch-secrets: true`,
+`nuget-login: false` and `upload-nuget-artifacts: true`, the nuget.org login
+and push in its own caller job; canary gated on unit + integration tests via
+`needs:` in its caller), **endatix-hub** (public; all three workflows; image +
+chart, `docker-image: ghcr.io/endatix/endatix-hub`, no SDK inputs;
+release-artifacts with `promotion: rebuild`, `fetch-secrets: true` for the
+Docker Hub credentials and `id-token: write`), and **endatix-saas** (private;
+passes `runner`: `endatix-docker` for canary/promote, `endatix-light` for
+release-start; docker-only, `promotion: image-retag`).
