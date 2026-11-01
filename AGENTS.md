@@ -229,8 +229,7 @@ config version always matches the workflow version.
     major ranges, no lockfile) runs during the semantic-release step with the
     App token and the Infisical env. Accepted. It is installed with
     `--ignore-scripts`, which removes install-time code execution (no
-    install/postinstall hooks; today's tree has none, so nothing changed), but
-    not run-time execution.
+    install/postinstall hooks), but not run-time execution.
   - The consumer's own code, which can do that minting too, including where
     no secret has been fetched yet: in canary.yml the PR build validation
     (`release-prepare.sh 0.0.0-ci`) and `release-test.sh` (on every event,
@@ -240,11 +239,10 @@ config version always matches the workflow version.
     secrets; and the rebuild path of release-artifacts.
 - **Known constraint: Infisical's export runs after the toolchain setup.**
   The secrets action exports every key under the project path (`recursive:
-  true`) into the job environment after the toolchains have set theirs. In
-  canary.yml that was already so for .NET and the JDK; this change moved only
-  Node and the semantic-release install before Infisical. In
-  release-artifacts.yml (with `fetch-secrets`) .NET and the JDK are newly
-  before it. A key named like one of those variables
+  true`) into the job environment after the toolchains have set theirs: in
+  canary.yml after .NET, the JDK and Node (and the semantic-release install),
+  in release-artifacts.yml (with `fetch-secrets`) after .NET and the JDK. A
+  key named like one of those variables
   (`JAVA_HOME*`, `DOTNET_ROOT`, `npm_config_*`, `PATH`-adjacent names) would
   override the toolchain's value for every later step. Keep such names out of
   the `github-actions-for-endatix` project.
@@ -295,10 +293,9 @@ endatix (`release-artifacts.yml`) and endatix-saas
 
 The `nuget-login` input (NuGet/login inside this workflow, key exported as
 `NUGET_API_KEY`) cannot succeed for any caller in another repository, which is
-every caller. It is kept in this change, marked unusable, because removing an
-input is a breaking contract change (a caller still passing it would fail to
-start) and belongs in its own `v2`-or-cleanup change, not in the runner
-work.
+every caller. It is kept, marked unusable, because removing an input is a
+breaking contract change (a caller still passing it would fail to start), which
+belongs in a `v2`.
 
 Current consumers: **test-release** (sandbox; docker-only, `dotnet-version:
 10.x`, default `image-retag` promotion), **api-contracts** (NuGet ×2 + npm +
@@ -313,13 +310,9 @@ Packages only, stables → GitHub Packages + nuget.org via trusted publishing;
 `dotnet-version: 10.x`; `promotion: rebuild` with `fetch-secrets: true`,
 `nuget-login: false` and `upload-nuget-artifacts: true`, the nuget.org login
 and push in its own caller job; canary gated on unit + integration tests via
-`needs:` in its caller; when it re-pins, both its canary (Node) and its
-rebuild (.NET now before Infisical) are affected by the reorder),
-**endatix-hub** (public; all three workflows, pinned at `12aed2d`; image +
+`needs:` in its caller), **endatix-hub** (public; all three workflows; image +
 chart, `docker-image: ghcr.io/endatix/endatix-hub`, no SDK inputs;
 release-artifacts with `promotion: rebuild`, `fetch-secrets: true` for the
-Docker Hub credentials and `id-token: write`; when it re-pins, only its canary
-is affected, by the Node move before Infisical: it sets up no toolchain in
-release-artifacts, so nothing moved there), and **endatix-saas** (private; the first `runner` consumer:
-`endatix-docker` for canary/promote, `endatix-light` for release-start;
-docker-only, `promotion: image-retag`).
+Docker Hub credentials and `id-token: write`), and **endatix-saas** (private;
+passes `runner`: `endatix-docker` for canary/promote, `endatix-light` for
+release-start; docker-only, `promotion: image-retag`).

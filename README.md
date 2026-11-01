@@ -142,20 +142,6 @@ semantic-release on main and hotfix/*, and gh for release-start (amd64 runners
 only: that is the one build it pins); anything else
 your `release-*.sh` scripts call they must install.
 
-> **After this change merges:** the examples' pins (`8e04473…`) predate the
-> `runner` input. Squash-merging makes a new commit, so once it lands, move
-> `v1` to it and, in one follow-up commit, update every example SHA in this
-> file to it and delete this note. The branch commit stays fetchable after the
-> branch is deleted (the pull request's `refs/pull/<n>/head` keeps it), so a pin
-> left on it keeps working silently instead of failing; re-pin anyway, since
-> nothing reviewed points there. In each consumer that passes `runner`, after
-> `git -C <release-workflows> fetch origin`, list every pin with
-> `grep -rn 'release-workflows/.*@' .github/workflows`; no line may still say
-> `re-pin`, and for each pin `<file>@<sha>` the SHA must be on `main`
-> (`git -C <release-workflows> merge-base --is-ancestor <sha> origin/main`) and
-> that same workflow must define the input
-> (`git -C <release-workflows> show <sha>:.github/workflows/<file> | grep -q '^      runner:'`).
-
 `release-start.yml` — the manual trigger you run to begin a stable release:
 
 ```yaml
