@@ -203,13 +203,16 @@ config version always matches the workflow version.
   reaches self-hosted runners from the **caller's** context, so only the
   caller repository needs access to the runner group — this repo does not.
   The self-hosted image (`ghcr.io/endatix/actions-runner`, built in
-  endatix-infra) carries the .NET SDK in a runner-owned `/usr/share/dotnet`,
-  setup-dotnet's Linux default, so setup-dotnet finds it there or installs
-  beside it. A self-hosted runner whose `/usr/share/dotnet` is not writable by
-  the runner user cannot run these workflows. release-start installs a pinned
-  gh CLI (linux amd64 only) on self-hosted runners when `gh` is missing. Node is set up only for semantic-release (main, hotfix/*);
-  a consumer script that needs Node, helm or anything else on a self-hosted
-  runner installs it itself.
+  endatix-infra; its toolset is `runner-image/Dockerfile` there) carries the
+  .NET SDK in a runner-owned `/usr/share/dotnet`, setup-dotnet's Linux
+  default. setup-dotnet downloads nothing while the image's SDK and its
+  runtime are the latest 10.0 patch (it also asks for the latest LTS runtime),
+  so the image moves with each .NET patch. A self-hosted runner whose
+  `/usr/share/dotnet` is not writable by the runner user cannot set up a .NET
+  version its image does not already carry. release-start installs a pinned
+  gh CLI (linux amd64 only) on self-hosted runners when `gh` is missing. Node
+  is set up only for semantic-release (main, hotfix/*); a consumer script that
+  needs a tool the image lacks installs it itself.
 - **No tool download runs with the Infisical secrets, the App token, the
   nuget.org key or the GHCR login in the job.** Toolchains (.NET, JDK, Node)
   and the semantic-release `npm install` run before the Infisical step, the App
